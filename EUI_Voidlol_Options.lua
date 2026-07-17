@@ -328,14 +328,10 @@ initFrame:SetScript("OnEvent", function(self)
                   local c = QF(); if c then c.enabled = v end
                   RefreshAll()
               end },
-            { type="toggle", text="Set Raid Marker on Focus",
-              getValue=function() local c = QF(); return c and c.setMark or false end,
-              setValue=function(v)
-                  local c = QF(); if c then c.setMark = v end
-                  RefreshAll()
-                  RefreshWidgets()
-              end })
+            { type="label", text="" })
         y = y - h
+
+        _, h = W:SectionHeader(parent, "TRIGGER", y); y = y - h
 
         local modifierValues = { shift = "Shift", ctrl = "Ctrl", alt = "Alt" }
         local modifierOrder  = { "shift", "ctrl", "alt" }
@@ -369,7 +365,17 @@ initFrame:SetScript("OnEvent", function(self)
             [8] = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_8:16|t Skull",
         }
         local markOrder = { 1, 2, 3, 4, 5, 6, 7, 8 }
+
+        _, h = W:SectionHeader(parent, "RAID MARKER", y); y = y - h
+
         _, h = W:DualRow(parent, y,
+            { type="toggle", text="Set Raid Marker on Focus",
+              getValue=function() local c = QF(); return c and c.setMark or false end,
+              setValue=function(v)
+                  local c = QF(); if c then c.setMark = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
             { type="dropdown", text="Marker",
               values=markValues, order=markOrder,
               disabled=MarkOff,
@@ -377,7 +383,10 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local c = QF(); if c then c.markNumber = v end
                   RefreshAll()
-              end },
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
             { type="toggle", text="Safe Mark",
               tooltip="Only sets the marker on castable targets (help/harm), preventing 'invalid target' errors.",
               disabled=MarkOff,
@@ -385,7 +394,8 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local c = QF(); if c then c.safeMark = v end
                   RefreshAll()
-              end })
+              end },
+            { type="label", text="" })
         y = y - h
 
         _, h = W:SectionHeader(parent, "READY CHECK", y); y = y - h
@@ -916,22 +926,28 @@ initFrame:SetScript("OnEvent", function(self)
                   RefreshAll()
                   RefreshWidgets()
               end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "GROUP", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
             { type="toggle", text="Show in Party",
               getValue=function() local c = HealerMana(); return c and c.showInParty ~= false end,
               setValue=function(v)
                   local c = HealerMana(); if c then c.showInParty = v end
                   RefreshAll()
-              end })
-        y = y - h
-
-        _, h = W:DualRow(parent, y,
+              end },
             { type="toggle", text="Show in Raid",
               getValue=function() local c = HealerMana(); return c and c.showInRaid ~= false end,
               setValue=function(v)
                   local c = HealerMana(); if c then c.showInRaid = v end
                   RefreshAll()
                   RefreshWidgets()
-              end },
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
             { type="dropdown", text="Raid Grow Direction",
               values = { VERTICAL = "Vertical", HORIZONTAL = "Horizontal" },
               order  = { "VERTICAL", "HORIZONTAL" },
@@ -940,8 +956,11 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local c = HealerMana(); if c then c.raidGrowDirection = v end
                   RefreshAll()
-              end })
+              end },
+            { type="label", text="" })
         y = y - h
+
+        _, h = W:SectionHeader(parent, "ICON", y); y = y - h
 
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Show Icon",
