@@ -9,6 +9,18 @@
 local ADDON_NAME, ns = ...
 local EVL = ns.EVL
 
+-- Reads the .toc's ## Version line (the release workflow rewrites it on every
+-- publish), so this always matches whatever actually shipped -- no separate
+-- constant to keep in sync by hand.
+local function GetAddonVersion()
+    if C_AddOns and C_AddOns.GetAddOnMetadata then
+        return C_AddOns.GetAddOnMetadata(ADDON_NAME, "Version")
+    end
+    if GetAddOnMetadata then
+        return GetAddOnMetadata(ADDON_NAME, "Version")
+    end
+end
+
 local PAGE_QOL          = "QoL"
 local PAGE_QUICK_FOCUS  = "Quick Focus"
 local PAGE_COMBAT_TEXT  = "Combat Text"
@@ -1069,9 +1081,15 @@ initFrame:SetScript("OnEvent", function(self)
     InjectSidebar()
 
     do
+        local version = GetAddonVersion()
+        local description = "Custom module for personal features and settings."
+        if version then
+            description = description .. "  |cff888888v" .. version .. "|r"
+        end
+
         RegisterModuleExternal({
             title       = "Voidlol",
-            description = "Custom module for personal features and settings.",
+            description = description,
             pages       = { PAGE_QOL, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
             buildPage   = function(pageName, parent, yOffset)
                 if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
