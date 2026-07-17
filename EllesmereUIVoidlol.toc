@@ -1,0 +1,20 @@
+## Interface: 120000, 120001, 120005, 120007
+## Title: |cff0cd29fEllesmereUI|r Voidlol
+## Category: |cff0cd29fEllesmere|rUI
+## Group: EllesmereUI
+## Notes: Custom module for personal features and settings.
+## Author: Ellesmere
+## Version: 8.4.1
+## Dependencies: EllesmereUI, EllesmereUIUnitFrames
+## SavedVariables: EllesmereUIVoidlolDB
+## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
+
+# Main Lua
+EllesmereUIVoidlol.lua
+EllesmereUIVoidlol_QuickFocus.lua
+EllesmereUIVoidlol_CombatText.lua
+EllesmereUIVoidlol_Castbar.lua
+EllesmereUIVoidlol_HealerMana.lua
+
+# Options
+EUI_Voidlol_Options.lua
