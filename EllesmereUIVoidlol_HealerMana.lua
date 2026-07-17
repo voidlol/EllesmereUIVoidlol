@@ -167,13 +167,36 @@ local function IsIconShown()
     return not cfg or cfg.showIcon ~= false
 end
 
+-- #name/string.sub count/cut BYTES, not characters -- every non-Latin letter
+-- (Cyrillic, etc) is a multi-byte UTF-8 sequence, so a byte-based cut both
+-- undercounts the visible length and can slice a character in half. Iterate
+-- by UTF-8 sequence instead: one leading byte (ASCII, or a 0xC2-0xF4 lead
+-- byte) followed by its continuation bytes (0x80-0xBF).
+local function Utf8Iter(str) return (str or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") end
+
+local function Utf8Len(str)
+    local len = 0
+    for _ in Utf8Iter(str) do len = len + 1 end
+    return len
+end
+
+local function Utf8Sub(str, maxLen)
+    local out, n = {}, 0
+    for char in Utf8Iter(str) do
+        n = n + 1
+        if n > maxLen then break end
+        out[n] = char
+    end
+    return table.concat(out)
+end
+
 -- maxLen <= 0 (or unset) means unlimited, matching the options slider's "0 = Unlimited".
 local function TruncateHealerName(name)
     if not name then return "" end
     local cfg = DB()
     local maxLen = cfg and cfg.nameMaxLength
-    if not maxLen or maxLen <= 0 or #name <= maxLen then return name end
-    return name:sub(1, maxLen)
+    if not maxLen or maxLen <= 0 or Utf8Len(name) <= maxLen then return name end
+    return Utf8Sub(name, maxLen)
 end
 
 -------------------------------------------------------------------------------
