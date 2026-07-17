@@ -9,6 +9,7 @@
 local ADDON_NAME, ns = ...
 local EVL = ns.EVL
 
+local PAGE_QOL          = "QoL"
 local PAGE_QUICK_FOCUS  = "Quick Focus"
 local PAGE_COMBAT_TEXT  = "Combat Text"
 local PAGE_CASTBAR      = "Target Castbar"
@@ -25,6 +26,7 @@ initFrame:SetScript("OnEvent", function(self)
     --  DB helpers
     ---------------------------------------------------------------------------
     local function DB()      return EVL.DB() end
+    local function QoL()     local d = DB(); return d and d.qol end
     local function QF()      local d = DB(); return d and d.quickFocus end
     local function CT(key)   local d = DB(); local ct = d and d.combatText; return ct and ct[key] end
     local function Castbar() local d = DB(); return d and d.castbar end
@@ -263,6 +265,33 @@ initFrame:SetScript("OnEvent", function(self)
             local fn = rl[i]
             if fn then fn() end
         end
+    end
+
+    ---------------------------------------------------------------------------
+    --  QoL page -- small quality-of-life tweaks
+    ---------------------------------------------------------------------------
+    local function BuildQoLPage(pageName, parent, yOffset)
+        local W = EllesmereUI.Widgets
+        local y = yOffset
+        local h
+
+        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        parent._showRowDivider = true
+
+        _, h = W:SectionHeader(parent, "VISIBILITY", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Actual Dragonriding Visibility",
+              tooltip="EllesmereUI's \"Hide when Dragonriding\" visibility option only hides once you're actually airborne (IsFlying()). This makes it hide as soon as you're on a skyriding-capable mount, before takeoff -- matching \"hide whenever I can Dragonride\".",
+              getValue=function() local c = QoL(); return c and c.actualDragonridingVisibility or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.actualDragonridingVisibility = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        return math.abs(y)
     end
 
     ---------------------------------------------------------------------------
@@ -1043,8 +1072,9 @@ initFrame:SetScript("OnEvent", function(self)
         RegisterModuleExternal({
             title       = "Voidlol",
             description = "Custom module for personal features and settings.",
-            pages       = { PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
+            pages       = { PAGE_QOL, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
             buildPage   = function(pageName, parent, yOffset)
+                if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
                 if pageName == PAGE_QUICK_FOCUS  then return BuildQuickFocusPage(pageName, parent, yOffset) end
                 if pageName == PAGE_COMBAT_TEXT  then return BuildCombatTextPage(pageName, parent, yOffset) end
                 if pageName == PAGE_CASTBAR      then return BuildCastbarPage(pageName, parent, yOffset) end

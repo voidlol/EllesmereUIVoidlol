@@ -15,6 +15,10 @@ local defaults = {
         voidlol = {
             enabled = false,
 
+            qol = {
+                actualDragonridingVisibility = false,
+            },
+
             quickFocus = {
                 enabled    = false,
                 modifier   = "shift",  -- "shift" | "ctrl" | "alt"
@@ -121,6 +125,7 @@ end
 local function ApplyAll()
     local cfg = EVL.DB()
     if not cfg then return end
+    if EVL.ApplyQoL then EVL.ApplyQoL() end
     if EVL.ApplyQuickFocus then EVL.ApplyQuickFocus() end
     if EVL.ApplyCombatText then EVL.ApplyCombatText() end
     if EVL.ApplyCastbar then EVL.ApplyCastbar() end
