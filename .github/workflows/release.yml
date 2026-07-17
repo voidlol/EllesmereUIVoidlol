@@ -51,6 +51,19 @@ jobs:
           echo "version=$next" >> "$GITHUB_OUTPUT"
           echo "tag=v$next" >> "$GITHUB_OUTPUT"
 
+      - name: Bump .toc version
+        run: |
+          set -euo pipefail
+          TOC_FILE="${ADDON_NAME}.toc"
+          sed -i -E "s/^(## Version:).*/\1 ${{ steps.version.outputs.version }}/" "$TOC_FILE"
+          grep '^## Version:' "$TOC_FILE"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$TOC_FILE"
+          git commit -m "version bump -> ${{ steps.version.outputs.version }}"
+          git push origin "HEAD:${{ github.ref_name }}"
+
       - name: Build addon package
         id: package
         run: |
@@ -92,8 +105,6 @@ jobs:
       - name: Tag release
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag "${{ steps.version.outputs.tag }}"
           git push origin "${{ steps.version.outputs.tag }}"
 
