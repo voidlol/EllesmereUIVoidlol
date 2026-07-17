@@ -19,11 +19,20 @@ end
 --  "hide only once I'm already airborne". Written to hold regardless of
 --  whether EllesmereUI's own predicate changes shape in a future update --
 --  cached once, restored verbatim when the toggle is turned back off.
+--
+--  Uses EllesmereUI.IsPlayerMountedLike() instead of plain IsMounted(): a
+--  druid's Flight Form is a shapeshift, not a mount, so IsMounted() alone
+--  reports false while skyriding as a druid (same gap EllesmereUI itself
+--  already works around in IsPlayerSkyriding()/CheckVisibilityOptionsNonMacro,
+--  just not in this particular predicate).
 -------------------------------------------------------------------------------
 local originalIsAirborneSkyriding
 
 local function OverriddenIsAirborneSkyriding()
-    if not (IsMounted and IsMounted()) then return false end
+    local EUI = _G.EllesmereUI
+    local mountedLike = (EUI and EUI.IsPlayerMountedLike and EUI.IsPlayerMountedLike())
+        or (IsMounted and IsMounted())
+    if not mountedLike then return false end
     if C_PlayerInfo and C_PlayerInfo.GetGlidingInfo then
         local _, canGlide = C_PlayerInfo.GetGlidingInfo()
         return canGlide == true
