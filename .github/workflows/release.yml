@@ -1,0 +1,108 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version part to bump (ignored for the very first release, which is always 1.0.0)"
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+
+permissions:
+  contents: write
+
+env:
+  ADDON_NAME: EllesmereUIVoidlol
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute next version
+        id: version
+        run: |
+          set -euo pipefail
+          latest_tag=$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' --sort=-v:refname | head -n1 || true)
+
+          if [ -z "$latest_tag" ]; then
+            next="1.0.0"
+          else
+            ver="${latest_tag#v}"
+            IFS='.' read -r major minor patch <<< "$ver"
+            case "${{ inputs.bump }}" in
+              major) major=$((major + 1)); minor=0; patch=0 ;;
+              minor) minor=$((minor + 1)); patch=0 ;;
+              patch) patch=$((patch + 1)) ;;
+            esac
+            next="${major}.${minor}.${patch}"
+          fi
+
+          echo "Latest tag: ${latest_tag:-<none>} -> next version: $next"
+          echo "version=$next" >> "$GITHUB_OUTPUT"
+          echo "tag=v$next" >> "$GITHUB_OUTPUT"
+
+      - name: Build addon package
+        id: package
+        run: |
+          set -euo pipefail
+          TOC_FILE="${ADDON_NAME}.toc"
+          STAGE="dist/${ADDON_NAME}"
+          rm -rf dist
+          mkdir -p "$STAGE"
+
+          # Bare .lua filenames listed in the TOC (comments/blank lines stripped);
+          # everything else on disk is copied as-is (toc, media, subfolders, ...).
+          mapfile -t allowed_lua < <(grep -Ev '^\s*(#|$)' "$TOC_FILE" | grep -Ei '\.lua\s*$' | tr -d '\r')
+
+          shopt -s dotglob
+          for entry in *; do
+            case "$entry" in
+              .git|.github|.claude|.agents|.mimocode|.gitignore|dist) continue ;;
+            esac
+
+            if [ -f "$entry" ] && [[ "$entry" == *.lua ]]; then
+              keep=false
+              for l in "${allowed_lua[@]}"; do
+                if [ "$l" = "$entry" ]; then keep=true; break; fi
+              done
+              if [ "$keep" = true ]; then
+                cp "$entry" "$STAGE/"
+              else
+                echo "Skipping (not in TOC): $entry"
+              fi
+            else
+              cp -r "$entry" "$STAGE/"
+            fi
+          done
+
+          zip_name="${ADDON_NAME}-${{ steps.version.outputs.version }}.zip"
+          (cd dist && zip -r "../${zip_name}" "${ADDON_NAME}")
+          echo "zip=${zip_name}" >> "$GITHUB_OUTPUT"
+
+      - name: Tag release
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag "${{ steps.version.outputs.tag }}"
+          git push origin "${{ steps.version.outputs.tag }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${{ steps.version.outputs.tag }}" \
+            "${{ steps.package.outputs.zip }}" \
+            --title "${{ steps.version.outputs.tag }}" \
+            --generate-notes
