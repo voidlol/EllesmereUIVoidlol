@@ -4,7 +4,7 @@
 ## Group: EllesmereUI
 ## Notes: Custom module for personal features and settings.
 ## Author: Ellesmere
-## Version: 8.4.1
+## Version: 1.1.0
 ## Dependencies: EllesmereUI, EllesmereUIUnitFrames
 ## SavedVariables: EllesmereUIVoidlolDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
