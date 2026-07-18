@@ -17,6 +17,7 @@ local defaults = {
 
             qol = {
                 actualDragonridingVisibility = false,
+                suppressAutoPlayed = false,
 
                 statusBar = {
                     enabled = false,

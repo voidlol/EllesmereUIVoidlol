@@ -348,6 +348,19 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
+        _, h = W:SectionHeader(parent, "CHAT", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Suppress Auto /played",
+              tooltip="Blocks the automatic \"You have played...\" system message some addons trigger on every login (e.g. XPBarEnhanced requesting play time for its own tracking). Typing /played yourself still works normally.",
+              getValue=function() local c = QoL(); return c and c.suppressAutoPlayed or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.suppressAutoPlayed = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
         _, h = W:SectionHeader(parent, "STATUS BAR GENERAL", y); y = y - h
 
         local function SBOff() local c = SB(); return not (c and c.enabled) end
