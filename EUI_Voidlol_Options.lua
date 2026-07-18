@@ -39,6 +39,8 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     local function DB()      return EVL.DB() end
     local function QoL()     local d = DB(); return d and d.qol end
+    local function SB()      local q = QoL(); return q and q.statusBar end
+    local function SBBlock(key) local s = SB(); local b = s and s.blocks; return b and b[key] end
     local function QF()      local d = DB(); return d and d.quickFocus end
     local function CT(key)   local d = DB(); local ct = d and d.combatText; return ct and ct[key] end
     local function Castbar() local d = DB(); return d and d.castbar end
@@ -298,6 +300,179 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() local c = QoL(); return c and c.actualDragonridingVisibility or false end,
               setValue=function(v)
                   local c = QoL(); if c then c.actualDragonridingVisibility = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "STATUS BAR", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Enabled",
+              tooltip="A small movable text bar (FPS+Latency / Durability / Clock). Fully independent of EllesmereUIDataBars, so it survives its daily auto-updates. Position it via EllesmereUI Unlock Mode.",
+              getValue=function() local c = SB(); return c and c.enabled or false end,
+              setValue=function(v)
+                  local c = SB(); if c then c.enabled = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show FPS + Latency",
+              tooltip="One block: \"FPS: 134  MS: 44\". Mouseover shows the full latency + FPS tooltip (memory usage, force GC) copied from EllesmereUIDataBars.",
+              getValue=function() local c = SBBlock("fps"); return c and c.enabled or false end,
+              setValue=function(v)
+                  local c = SBBlock("fps"); if c then c.enabled = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Position",
+              min = 1, max = 3, step = 1,
+              getValue=function() local c = SBBlock("fps"); return c and c.order or 1 end,
+              setValue=function(v)
+                  local c = SBBlock("fps"); if c then c.order = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Use World Latency",
+              tooltip="Off shows home (realm) latency. On shows world (server-side action) latency.",
+              getValue=function() local c = SBBlock("fps"); return c and c.useWorldLatency or false end,
+              setValue=function(v)
+                  local c = SBBlock("fps"); if c then c.useWorldLatency = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Durability",
+              tooltip="Mouseover breaks it down per equipped slot.",
+              getValue=function() local c = SBBlock("durability"); return c and c.enabled or false end,
+              setValue=function(v)
+                  local c = SBBlock("durability"); if c then c.enabled = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Position",
+              min = 1, max = 3, step = 1,
+              getValue=function() local c = SBBlock("durability"); return c and c.order or 2 end,
+              setValue=function(v)
+                  local c = SBBlock("durability"); if c then c.order = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Clock",
+              tooltip="Left Click opens the Calendar. Mouseover/right-click/shift-middle-click copied from EllesmereUIDataBars' clock block.",
+              getValue=function() local c = SBBlock("clock"); return c and c.enabled or false end,
+              setValue=function(v)
+                  local c = SBBlock("clock"); if c then c.enabled = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Position",
+              min = 1, max = 3, step = 1,
+              getValue=function() local c = SBBlock("clock"); return c and c.order or 3 end,
+              setValue=function(v)
+                  local c = SBBlock("clock"); if c then c.order = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "LAYOUT", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Width",
+              min = 0, max = 600, step = 10,
+              tooltip="0 = auto-fit to content. The bar is never narrower than what its enabled blocks need; a higher value stretches it and splits it into equal-width slots, each block centered in its own slot.",
+              getValue=function() local c = SB(); return c and c.width or 0 end,
+              setValue=function(v)
+                  local c = SB(); if c then c.width = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Vertical Padding",
+              min = 0, max = 20, step = 1,
+              tooltip="Extra space above and below the text, on top of the font's own height.",
+              getValue=function() local c = SB(); return c and c.vPadding or 3 end,
+              setValue=function(v)
+                  local c = SB(); if c then c.vPadding = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "FONT", y); y = y - h
+
+        local sbFontValues, sbFontOrder = EllesmereUI.BuildFontDropdownData()
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Font",
+              values = sbFontValues, order = sbFontOrder,
+              getValue=function() local c = SB(); return c and c.fontFace or "__global" end,
+              setValue=function(v)
+                  local c = SB(); if c then c.fontFace = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Font Size",
+              min = 8, max = 32, step = 1,
+              getValue=function() local c = SB(); return c and c.fontSize or 13 end,
+              setValue=function(v)
+                  local c = SB(); if c then c.fontSize = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Outline",
+              getValue=function() local c = SB(); return c and c.outline ~= false end,
+              setValue=function(v)
+                  local c = SB(); if c then c.outline = v end
+                  RefreshAll()
+              end },
+            { type="colorpicker", text="Label Color",
+              tooltip="Colors the field names (\"FPS:\", \"MS:\", \"Durability:\"). The numbers themselves stay colored by value.",
+              getValue=function()
+                  local c = SB()
+                  return (c and c.labelColorR or 0.6), (c and c.labelColorG or 0.6), (c and c.labelColorB or 0.6)
+              end,
+              setValue=function(r, g, b)
+                  local c = SB()
+                  if c then c.labelColorR = r; c.labelColorG = g; c.labelColorB = b end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "BACKGROUND", y); y = y - h
+
+        local function BgOff() local c = SB(); return not (c and c.bgEnabled) end
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Background",
+              getValue=function() local c = SB(); return c and c.bgEnabled or false end,
+              setValue=function(v)
+                  local c = SB(); if c then c.bgEnabled = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="colorpicker", text="Background Color",
+              disabled=BgOff,
+              getValue=function()
+                  local c = SB()
+                  return (c and c.bgColorR or 0), (c and c.bgColorG or 0), (c and c.bgColorB or 0)
+              end,
+              setValue=function(r, g, b)
+                  local c = SB()
+                  if c then c.bgColorR = r; c.bgColorG = g; c.bgColorB = b end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Background Opacity",
+              min = 0, max = 100, step = 1,
+              disabled=BgOff,
+              getValue=function() local c = SB(); return c and c.bgOpacity or 50 end,
+              setValue=function(v)
+                  local c = SB(); if c then c.bgOpacity = v end
                   RefreshAll()
               end },
             { type="label", text="" })

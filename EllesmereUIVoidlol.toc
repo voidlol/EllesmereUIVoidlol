@@ -12,6 +12,7 @@
 # Main Lua
 EllesmereUIVoidlol.lua
 EllesmereUIVoidlol_QoL.lua
+EllesmereUIVoidlol_StatusBar.lua
 EllesmereUIVoidlol_QuickFocus.lua
 EllesmereUIVoidlol_CombatText.lua
 EllesmereUIVoidlol_Castbar.lua

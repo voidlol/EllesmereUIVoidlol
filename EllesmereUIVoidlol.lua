@@ -17,6 +17,38 @@ local defaults = {
 
             qol = {
                 actualDragonridingVisibility = false,
+
+                statusBar = {
+                    enabled = false,
+                    spacing = 12,
+                    pos     = nil,
+
+                    -- 0 = auto-fit to content; never narrower than that
+                    -- regardless of this value (see RefreshStatusBar).
+                    width    = 0,
+                    vPadding = 3,
+
+                    fontFace = "__global",
+                    fontSize = 13,
+                    outline  = true,
+                    labelColorR = 0.6,
+                    labelColorG = 0.6,
+                    labelColorB = 0.6,
+
+                    bgEnabled = false,
+                    bgColorR  = 0,
+                    bgColorG  = 0,
+                    bgColorB  = 0,
+                    bgOpacity = 50,
+
+                    -- fps block shows BOTH FPS and latency ("FPS: 134  MS: 44") --
+                    -- one block, not two.
+                    blocks = {
+                        fps        = { enabled = true,  order = 1, useWorldLatency = false },
+                        durability = { enabled = true,  order = 2 },
+                        clock      = { enabled = false, order = 3 },
+                    },
+                },
             },
 
             quickFocus = {
@@ -126,6 +158,7 @@ local function ApplyAll()
     local cfg = EVL.DB()
     if not cfg then return end
     if EVL.ApplyQoL then EVL.ApplyQoL() end
+    if EVL.ApplyStatusBar then EVL.ApplyStatusBar() end
     if EVL.ApplyQuickFocus then EVL.ApplyQuickFocus() end
     if EVL.ApplyCombatText then EVL.ApplyCombatText() end
     if EVL.ApplyCastbar then EVL.ApplyCastbar() end
