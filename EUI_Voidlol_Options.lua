@@ -348,7 +348,10 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "STATUS BAR", y); y = y - h
+        _, h = W:SectionHeader(parent, "STATUS BAR GENERAL", y); y = y - h
+
+        local function SBOff() local c = SB(); return not (c and c.enabled) end
+        local function BgOff() local c = SB(); return SBOff() or not (c and c.bgEnabled) end
 
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Enabled",
@@ -357,6 +360,7 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local c = SB(); if c then c.enabled = v end
                   RefreshAll()
+                  RefreshWidgets()
               end },
             { type="label", text="" })
         y = y - h
@@ -364,6 +368,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Show FPS + Latency",
               tooltip="One block: \"FPS: 134  MS: 44\". Mouseover shows the full latency + FPS tooltip (memory usage, force GC) copied from EllesmereUIDataBars.",
+              disabled=SBOff,
               getValue=function() local c = SBBlock("fps"); return c and c.enabled or false end,
               setValue=function(v)
                   local c = SBBlock("fps"); if c then c.enabled = v end
@@ -371,6 +376,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="slider", text="Position",
               min = 1, max = 3, step = 1,
+              disabled=SBOff,
               getValue=function() local c = SBBlock("fps"); return c and c.order or 1 end,
               setValue=function(v)
                   local c = SBBlock("fps"); if c then c.order = v end
@@ -381,6 +387,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Use World Latency",
               tooltip="Off shows home (realm) latency. On shows world (server-side action) latency.",
+              disabled=SBOff,
               getValue=function() local c = SBBlock("fps"); return c and c.useWorldLatency or false end,
               setValue=function(v)
                   local c = SBBlock("fps"); if c then c.useWorldLatency = v end
@@ -392,6 +399,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Show Durability",
               tooltip="Mouseover breaks it down per equipped slot.",
+              disabled=SBOff,
               getValue=function() local c = SBBlock("durability"); return c and c.enabled or false end,
               setValue=function(v)
                   local c = SBBlock("durability"); if c then c.enabled = v end
@@ -399,6 +407,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="slider", text="Position",
               min = 1, max = 3, step = 1,
+              disabled=SBOff,
               getValue=function() local c = SBBlock("durability"); return c and c.order or 2 end,
               setValue=function(v)
                   local c = SBBlock("durability"); if c then c.order = v end
@@ -409,6 +418,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Show Clock",
               tooltip="Left Click opens the Calendar. Mouseover/right-click/shift-middle-click copied from EllesmereUIDataBars' clock block.",
+              disabled=SBOff,
               getValue=function() local c = SBBlock("clock"); return c and c.enabled or false end,
               setValue=function(v)
                   local c = SBBlock("clock"); if c then c.enabled = v end
@@ -416,6 +426,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="slider", text="Position",
               min = 1, max = 3, step = 1,
+              disabled=SBOff,
               getValue=function() local c = SBBlock("clock"); return c and c.order or 3 end,
               setValue=function(v)
                   local c = SBBlock("clock"); if c then c.order = v end
@@ -423,12 +434,13 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "LAYOUT", y); y = y - h
+        _, h = W:SectionHeader(parent, "STATUS BAR VISUAL", y); y = y - h
 
         _, h = W:DualRow(parent, y,
             { type="slider", text="Width",
               min = 0, max = 600, step = 10,
               tooltip="0 = auto-fit to content. The bar is never narrower than what its enabled blocks need; a higher value stretches it and splits it into equal-width slots, each block centered in its own slot.",
+              disabled=SBOff,
               getValue=function() local c = SB(); return c and c.width or 0 end,
               setValue=function(v)
                   local c = SB(); if c then c.width = v end
@@ -437,6 +449,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="slider", text="Vertical Padding",
               min = 0, max = 20, step = 1,
               tooltip="Extra space above and below the text, on top of the font's own height.",
+              disabled=SBOff,
               getValue=function() local c = SB(); return c and c.vPadding or 3 end,
               setValue=function(v)
                   local c = SB(); if c then c.vPadding = v end
@@ -444,12 +457,11 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "FONT", y); y = y - h
-
         local sbFontValues, sbFontOrder = EllesmereUI.BuildFontDropdownData()
         _, h = W:DualRow(parent, y,
             { type="dropdown", text="Font",
               values = sbFontValues, order = sbFontOrder,
+              disabled=SBOff,
               getValue=function() local c = SB(); return c and c.fontFace or "__global" end,
               setValue=function(v)
                   local c = SB(); if c then c.fontFace = v end
@@ -457,6 +469,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="slider", text="Font Size",
               min = 8, max = 32, step = 1,
+              disabled=SBOff,
               getValue=function() local c = SB(); return c and c.fontSize or 13 end,
               setValue=function(v)
                   local c = SB(); if c then c.fontSize = v end
@@ -466,6 +479,7 @@ initFrame:SetScript("OnEvent", function(self)
 
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Outline",
+              disabled=SBOff,
               getValue=function() local c = SB(); return c and c.outline ~= false end,
               setValue=function(v)
                   local c = SB(); if c then c.outline = v end
@@ -473,6 +487,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="colorpicker", text="Label Color",
               tooltip="Colors the field names (\"FPS:\", \"MS:\", \"Durability:\"). The numbers themselves stay colored by value.",
+              disabled=SBOff,
               getValue=function()
                   local c = SB()
                   return (c and c.labelColorR or 0.6), (c and c.labelColorG or 0.6), (c and c.labelColorB or 0.6)
@@ -484,12 +499,9 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "BACKGROUND", y); y = y - h
-
-        local function BgOff() local c = SB(); return not (c and c.bgEnabled) end
-
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Show Background",
+              disabled=SBOff,
               getValue=function() local c = SB(); return c and c.bgEnabled or false end,
               setValue=function(v)
                   local c = SB(); if c then c.bgEnabled = v end
