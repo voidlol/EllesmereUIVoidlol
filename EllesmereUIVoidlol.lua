@@ -119,26 +119,40 @@ local defaults = {
                 overlayMode               = false,
             },
 
+            -- Master enabled switch is shared; every visual setting is
+            -- independent per frame (party/raid), including position.
             healerMana = {
-                enabled                   = false,
+                enabled = false,
 
-                showInParty               = true,
-                showInRaid                = true,
-                raidGrowDirection         = "VERTICAL", -- "VERTICAL" | "HORIZONTAL"
-
-                showIcon                  = true,
-                iconSize                  = 24,
-                nameMaxLength             = 0, -- 0 = unlimited
-
-                fontFace                  = "__global",
-                fontSize                  = 12,
-                useCustomManaColor        = false, -- off = red(0%)-to-green(100%) gradient
-                manaColorR                = 1,
-                manaColorG                = 1,
-                manaColorB                = 1,
-
-                partyPos                  = nil,
-                raidPos                   = nil,
+                party = {
+                    enabled            = true,
+                    showIcon           = true,
+                    iconSize           = 24,
+                    oneLineMode        = false, -- only relevant while showIcon is off
+                    nameMaxLength      = 0,     -- 0 = unlimited
+                    fontFace           = "__global",
+                    fontSize           = 12,
+                    useCustomManaColor = false, -- off = plain white
+                    manaColorR         = 1,
+                    manaColorG         = 1,
+                    manaColorB         = 1,
+                    pos                = nil,
+                },
+                raid = {
+                    enabled            = true,
+                    showIcon           = true,
+                    iconSize           = 24,
+                    oneLineMode        = false,
+                    nameMaxLength      = 0,
+                    fontFace           = "__global",
+                    fontSize           = 12,
+                    useCustomManaColor = false,
+                    manaColorR         = 1,
+                    manaColorG         = 1,
+                    manaColorB         = 1,
+                    raidGrowDirection  = "VERTICAL", -- "VERTICAL" | "HORIZONTAL"
+                    pos                = nil,
+                },
             },
         },
     },

@@ -45,9 +45,11 @@ initFrame:SetScript("OnEvent", function(self)
     local function CT(key)   local d = DB(); local ct = d and d.combatText; return ct and ct[key] end
     local function Castbar() local d = DB(); return d and d.castbar end
     local function HealerMana() local d = DB(); return d and d.healerMana end
+    local function HMFrame(key) local h = HealerMana(); return h and h[key] end
     local castbarPreview
     local castbarHeaderBuilder
-    local healerManaPreviewRow
+    local healerManaPreviewHdr
+    local healerManaPartyCaption, healerManaRaidCaption
     local healerManaHeaderBuilder
 
     local RefreshWidgets
@@ -232,24 +234,65 @@ initFrame:SetScript("OnEvent", function(self)
         end
     end
 
-    -- Restyles the standalone Healer Mana preview row (independent of the
-    -- Enabled toggle / Unlock Mode) with a random sample healer, so the
-    -- options page always shows a live sample as settings change and actually
-    -- demonstrates the range (spec/icon, name, and mana% gradient) rather than
-    -- always looking identical. Also re-asserts Show() on the row's holder:
-    -- reported symptom was the preview vanishing after leaving a dungeon group
-    -- (i.e. after a loading screen) until /reloadui -- a PLAYER_ENTERING_WORLD-
-    -- driven re-show below is the standard remedy for a dynamically-created
-    -- frame going stale across a loading screen.
+    -- Restyles BOTH standalone Healer Mana preview groups -- Party (1 row)
+    -- and Raid (4 rows) -- side by side, independent of the Enabled toggle /
+    -- Unlock Mode / which group you're actually in, so the options page
+    -- always shows live samples for both frames' own settings at once.
+    -- Also re-parents/re-shows on every call: reported symptom was the
+    -- preview vanishing after leaving a dungeon group (i.e. after a loading
+    -- screen) until /reloadui -- a PLAYER_ENTERING_WORLD-driven refresh below
+    -- is the standard remedy for a dynamically-created frame going stale
+    -- across a loading screen, and re-parenting fixes a stale "parent" from
+    -- an earlier header rebuild the same way the header builder itself does.
+    local HEALER_MANA_PARTY_COUNT = 1
+    local HEALER_MANA_RAID_COUNT  = 4
+
     local function RefreshHealerManaPreview()
-        if not healerManaPreviewRow or not EVL.HealerMana_StylePreviewRow then return end
-        local holder = healerManaPreviewRow:GetParent()
-        if holder then holder:Show() end
-        local specID, name = 257, "Thunderstrikeus"
-        if EVL.HealerMana_GetRandomPreviewSample then
-            specID, name = EVL.HealerMana_GetRandomPreviewSample()
+        if not healerManaPreviewHdr then return end
+        if not (EVL.HealerMana_EnsurePreviewGroup and EVL.HealerMana_RefreshPreviewGroup) then return end
+        local hdr = healerManaPreviewHdr
+
+        local partyFrame = EVL.HealerMana_EnsurePreviewGroup("party", hdr, HEALER_MANA_PARTY_COUNT)
+        local raidFrame  = EVL.HealerMana_EnsurePreviewGroup("raid", hdr, HEALER_MANA_RAID_COUNT)
+
+        if not healerManaPartyCaption then
+            healerManaPartyCaption = hdr:CreateFontString(nil, "OVERLAY")
+            local fontPath = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath()) or "Fonts\\FRIZQT__.TTF"
+            healerManaPartyCaption:SetFont(fontPath, 11, "OUTLINE")
+            healerManaPartyCaption:SetTextColor(1, 1, 1, 0.6)
+            healerManaPartyCaption:SetText("PARTY")
         end
-        EVL.HealerMana_StylePreviewRow(healerManaPreviewRow, specID, name, math.random(1, 100))
+        if not healerManaRaidCaption then
+            healerManaRaidCaption = hdr:CreateFontString(nil, "OVERLAY")
+            local fontPath = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath()) or "Fonts\\FRIZQT__.TTF"
+            healerManaRaidCaption:SetFont(fontPath, 11, "OUTLINE")
+            healerManaRaidCaption:SetTextColor(1, 1, 1, 0.6)
+            healerManaRaidCaption:SetText("RAID")
+        end
+        healerManaPartyCaption:SetParent(hdr)
+        healerManaRaidCaption:SetParent(hdr)
+
+        local pw, ph = EVL.HealerMana_RefreshPreviewGroup("party", HEALER_MANA_PARTY_COUNT)
+        local rw, rh = EVL.HealerMana_RefreshPreviewGroup("raid", HEALER_MANA_RAID_COUNT)
+
+        local CAPTION_GAP, COLUMN_GAP, TOP_PAD = 4, 40, 4
+        local totalW = pw + COLUMN_GAP + rw
+        local startX = -totalW / 2
+
+        healerManaPartyCaption:ClearAllPoints()
+        healerManaPartyCaption:SetPoint("TOPLEFT", hdr, "TOP", startX, -TOP_PAD)
+        partyFrame:ClearAllPoints()
+        partyFrame:SetPoint("TOPLEFT", healerManaPartyCaption, "BOTTOMLEFT", 0, -CAPTION_GAP)
+        partyFrame:Show()
+
+        healerManaRaidCaption:ClearAllPoints()
+        healerManaRaidCaption:SetPoint("TOPLEFT", hdr, "TOP", startX + pw + COLUMN_GAP, -TOP_PAD)
+        raidFrame:ClearAllPoints()
+        raidFrame:SetPoint("TOPLEFT", healerManaRaidCaption, "BOTTOMLEFT", 0, -CAPTION_GAP)
+        raidFrame:Show()
+
+        local captionH = healerManaPartyCaption:GetStringHeight() or 12
+        return TOP_PAD + captionH + CAPTION_GAP + math.max(ph, rh) + 10
     end
 
     local healerManaPreviewHealFrame = CreateFrame("Frame")
@@ -1043,8 +1086,9 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  Healer Mana page
     ---------------------------------------------------------------------------
-    -- Standalone preview row -- independent of Enabled/Unlock Mode, always
-    -- shows a live sample as settings change (EVL.HealerMana_StylePreviewRow).
+    -- Standalone preview groups -- Party (1 row) and Raid (4 rows), side by
+    -- side -- independent of Enabled/Unlock Mode, always showing live
+    -- samples for BOTH frames' own settings (EVL.HealerMana_RefreshPreviewGroup).
     -- Built via the HEADER mechanism (like BuildCastbarHeaderPreview), not
     -- buildPage's content area: getHeaderBuilder's function is invoked fresh
     -- on every page display (including a cached-page revisit), whereas
@@ -1054,24 +1098,12 @@ initFrame:SetScript("OnEvent", function(self)
     -- error, no fix from Show()/SetPoint/tab-switching, only /reloadui) --
     -- because SetPoint alone never re-parents a frame, so a holder created
     -- against a stale "parent" argument stays a child of that stale, no
-    -- longer relevant frame forever. Re-parenting here (SetParent(hdr)) on
-    -- every invocation fixes that at the root instead of just papering over it.
+    -- longer relevant frame forever. Re-parenting inside RefreshHealerManaPreview
+    -- (SetParent(hdr)) on every invocation fixes that at the root instead of
+    -- just papering over it.
     local function BuildHealerManaHeaderPreview(hdr, hdrW)
-        if not healerManaPreviewRow and EVL.HealerMana_CreatePreviewRow then
-            local holder = CreateFrame("Frame", nil, hdr)
-            holder:SetSize(280, 40)
-            healerManaPreviewRow = EVL.HealerMana_CreatePreviewRow(holder)
-            healerManaPreviewRow:ClearAllPoints()
-            healerManaPreviewRow:SetPoint("TOPLEFT", holder, "TOPLEFT", 0, 0)
-        end
-        if healerManaPreviewRow then
-            local holder = healerManaPreviewRow:GetParent()
-            holder:SetParent(hdr)
-            holder:ClearAllPoints()
-            holder:SetPoint("TOP", hdr, "TOP", 0, -20)
-            RefreshHealerManaPreview()
-        end
-        return 88
+        healerManaPreviewHdr = hdr
+        return RefreshHealerManaPreview() or 88
     end
 
     local function BuildHealerManaPage(pageName, parent, yOffset)
@@ -1087,14 +1119,121 @@ initFrame:SetScript("OnEvent", function(self)
         end
         parent._showRowDivider = true
 
-        local function RaidOff() local c = HealerMana(); return not (c and c.showInRaid) end
-        local function IconOff() local c = HealerMana(); return c and c.showIcon == false end
+        local function IconOff(key) local c = HMFrame(key); return c and c.showIcon == false end
+        local function ManaColorOff(key) local c = HMFrame(key); return not (c and c.useCustomManaColor) end
+        local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
+
+        -- Every visual setting is independent per frame; called once for
+        -- "party" and once for "raid" below.
+        local function BuildHealerFrameSection(sectionLabel, key)
+            _, h = W:SectionHeader(parent, sectionLabel, y); y = y - h
+
+            local raidRow = (key == "raid") and
+                { type="dropdown", text="Raid Grow Direction",
+                  values = { VERTICAL = "Vertical", HORIZONTAL = "Horizontal" },
+                  order  = { "VERTICAL", "HORIZONTAL" },
+                  getValue=function() local c = HMFrame("raid"); return c and c.raidGrowDirection or "VERTICAL" end,
+                  setValue=function(v)
+                      local c = HMFrame("raid"); if c then c.raidGrowDirection = v end
+                      RefreshAll()
+                  end }
+                or { type="label", text="" }
+
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="Enabled",
+                  tooltip="Shows mana% for healers in your " .. (key == "raid" and "raid." or "party."),
+                  getValue=function() local c = HMFrame(key); return c and c.enabled ~= false end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.enabled = v end
+                      RefreshAll()
+                      RefreshWidgets()
+                  end },
+                raidRow)
+            y = y - h
+
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="Show Icon",
+                  tooltip="Shows the healer's spec icon next to their name. Off collapses the row to text only.",
+                  getValue=function() local c = HMFrame(key); return c and c.showIcon ~= false end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.showIcon = v end
+                      RefreshAll()
+                      RefreshWidgets()
+                  end },
+                { type="slider", text="Icon Size",
+                  min = 12, max = 72, step = 1,
+                  disabled=function() return IconOff(key) end,
+                  getValue=function() local c = HMFrame(key); return c and c.iconSize or 24 end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.iconSize = v end
+                      RefreshAll()
+                  end })
+            y = y - h
+
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="One Line Mode",
+                  tooltip="Only while Show Icon is off: puts the name and mana% on a single line instead of stacking mana under the name.",
+                  disabled=function() return not IconOff(key) end,
+                  getValue=function() local c = HMFrame(key); return c and c.oneLineMode or false end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.oneLineMode = v end
+                      RefreshAll()
+                  end },
+                { type="slider", text="Max Name Length",
+                  min = 0, max = 10, step = 1,
+                  tooltip="Truncates each healer's name to this many characters. 0 = unlimited.",
+                  getValue=function() local c = HMFrame(key); return c and c.nameMaxLength or 0 end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.nameMaxLength = v end
+                      RefreshAll()
+                  end })
+            y = y - h
+
+            _, h = W:DualRow(parent, y,
+                { type="dropdown", text="Font",
+                  values = fontValues, order = fontOrder,
+                  getValue=function() local c = HMFrame(key); return c and c.fontFace or "__global" end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.fontFace = v end
+                      RefreshAll()
+                  end },
+                { type="slider", text="Font Size",
+                  min = 8, max = 32, step = 1,
+                  getValue=function() local c = HMFrame(key); return c and c.fontSize or 12 end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.fontSize = v end
+                      RefreshAll()
+                  end })
+            y = y - h
+
+            _, h = W:DualRow(parent, y,
+                { type="toggle", text="Use Custom Mana Color",
+                  tooltip="When off, mana% text uses the default color (#008CFF).",
+                  getValue=function() local c = HMFrame(key); return c and c.useCustomManaColor or false end,
+                  setValue=function(v)
+                      local c = HMFrame(key); if c then c.useCustomManaColor = v end
+                      RefreshAll()
+                      RefreshWidgets()
+                  end },
+                { type="colorpicker", text="Mana Text Color",
+                  disabled=function() return ManaColorOff(key) end,
+                  getValue=function()
+                      local c = HMFrame(key)
+                      return (c and c.manaColorR or 1), (c and c.manaColorG or 1), (c and c.manaColorB or 1)
+                  end,
+                  setValue=function(r, g, b)
+                      local c = HMFrame(key)
+                      if c then c.manaColorR = r; c.manaColorG = g; c.manaColorB = b end
+                      RefreshAll()
+                  end })
+            y = y - h
+        end
 
         _, h = W:SectionHeader(parent, "GENERAL", y); y = y - h
 
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Enabled",
-              tooltip="Shows mana% for your group's/raid's healers. Open EllesmereUI Unlock Mode to preview and position the Party/Raid frames.",
+              tooltip="Master switch for Healer Mana. Open EllesmereUI Unlock Mode to preview and position the Party/Raid frames.",
               getValue=function() local c = HealerMana(); return c and c.enabled or false end,
               setValue=function(v)
                   local c = HealerMana(); if c then c.enabled = v end
@@ -1104,113 +1243,8 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "GROUP", y); y = y - h
-
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Show in Party",
-              getValue=function() local c = HealerMana(); return c and c.showInParty ~= false end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.showInParty = v end
-                  RefreshAll()
-              end },
-            { type="toggle", text="Show in Raid",
-              getValue=function() local c = HealerMana(); return c and c.showInRaid ~= false end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.showInRaid = v end
-                  RefreshAll()
-                  RefreshWidgets()
-              end })
-        y = y - h
-
-        _, h = W:DualRow(parent, y,
-            { type="dropdown", text="Raid Grow Direction",
-              values = { VERTICAL = "Vertical", HORIZONTAL = "Horizontal" },
-              order  = { "VERTICAL", "HORIZONTAL" },
-              disabled = RaidOff,
-              getValue=function() local c = HealerMana(); return c and c.raidGrowDirection or "VERTICAL" end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.raidGrowDirection = v end
-                  RefreshAll()
-              end },
-            { type="label", text="" })
-        y = y - h
-
-        _, h = W:SectionHeader(parent, "ICON", y); y = y - h
-
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Show Icon",
-              tooltip="Shows the healer's spec icon next to their name. Off collapses the row to text only.",
-              getValue=function() local c = HealerMana(); return c and c.showIcon ~= false end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.showIcon = v end
-                  RefreshAll()
-                  RefreshWidgets()
-              end },
-            { type="slider", text="Icon Size",
-              min = 12, max = 72, step = 1,
-              disabled=IconOff,
-              getValue=function() local c = HealerMana(); return c and c.iconSize or 24 end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.iconSize = v end
-                  RefreshAll()
-              end })
-        y = y - h
-
-        _, h = W:DualRow(parent, y,
-            { type="slider", text="Max Name Length",
-              min = 0, max = 10, step = 1,
-              tooltip="Truncates each healer's name to this many characters. 0 = unlimited.",
-              getValue=function() local c = HealerMana(); return c and c.nameMaxLength or 0 end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.nameMaxLength = v end
-                  RefreshAll()
-              end },
-            { type="label", text="" })
-        y = y - h
-
-        _, h = W:SectionHeader(parent, "FONT", y); y = y - h
-
-        local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
-        _, h = W:DualRow(parent, y,
-            { type="dropdown", text="Font",
-              values = fontValues, order = fontOrder,
-              getValue=function() local c = HealerMana(); return c and c.fontFace or "__global" end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.fontFace = v end
-                  RefreshAll()
-              end },
-            { type="slider", text="Font Size",
-              min = 8, max = 32, step = 1,
-              getValue=function() local c = HealerMana(); return c and c.fontSize or 12 end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.fontSize = v end
-                  RefreshAll()
-              end })
-        y = y - h
-
-        local function ManaColorOff() local c = HealerMana(); return not (c and c.useCustomManaColor) end
-
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Use Custom Mana Color",
-              tooltip="When off, mana% text color is a red (0%) to green (100%) gradient based on the healer's current mana.",
-              getValue=function() local c = HealerMana(); return c and c.useCustomManaColor or false end,
-              setValue=function(v)
-                  local c = HealerMana(); if c then c.useCustomManaColor = v end
-                  RefreshAll()
-                  RefreshWidgets()
-              end },
-            { type="colorpicker", text="Mana Text Color",
-              disabled = ManaColorOff,
-              getValue=function()
-                  local c = HealerMana()
-                  return (c and c.manaColorR or 1), (c and c.manaColorG or 1), (c and c.manaColorB or 1)
-              end,
-              setValue=function(r, g, b)
-                  local c = HealerMana()
-                  if c then c.manaColorR = r; c.manaColorG = g; c.manaColorB = b end
-                  RefreshAll()
-              end })
-        y = y - h
+        BuildHealerFrameSection("PARTY", "party")
+        BuildHealerFrameSection("RAID", "raid")
 
         return math.abs(y)
     end

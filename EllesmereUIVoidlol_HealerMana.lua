@@ -3,7 +3,9 @@
 --  Shows mana% (+ spec icon + name) for your group's/raid's healers. Two
 --  independent containers -- "Healer Mana (Party)" and "Healer Mana (Raid)"
 --  -- each separately positionable via EllesmereUI Unlock Mode, mirroring
---  EllesmereUIVoidlol_CombatText.lua's two-frame pattern.
+--  EllesmereUIVoidlol_CombatText.lua's two-frame pattern. Every visual
+--  setting (icon, text, sizes, colors, one-line mode) is independent per
+--  frame -- only the master Enabled switch is shared.
 --
 --  Design notes (deviations from the reference implementation):
 --   - Mana/connection refresh is fully event-driven: UNIT_POWER_UPDATE,
@@ -16,18 +18,19 @@
 --     drag-to-position preview -- while Unlock Mode is open, both containers
 --     show sample healer rows, like CombatText's placeholder text. This one
 --     requires "Enabled" to be on (matches CombatText's own gate). (2) The
---     options page itself always shows one sample row (EVL.HealerMana_Create
---     PreviewRow/StylePreviewRow, called from EUI_Voidlol_Options.lua),
---     regardless of Enabled/Unlock Mode, so settings changes are visible
---     immediately without needing to enable the feature or open Unlock Mode.
+--     options page always shows two standalone sample groups -- Party (1
+--     row) and Raid (4 rows) -- via EVL.HealerMana_EnsurePreviewGroup/
+--     RefreshPreviewGroup, called from EUI_Voidlol_Options.lua, regardless
+--     of Enabled/Unlock Mode, so settings changes are visible immediately
+--     for BOTH frames at once without needing to enable the feature.
 --   - Spec icon accuracy uses the same queued NotifyInspect/GetInspectSpecialization
 --     flow every inspect-based addon uses (not secure/tainted, just throttled).
---   - Global font settings (font/size) apply to both name and mana text; the
---     configurable color applies to the mana% text only -- names stay
---     class-colored (matches how cast-target text is handled elsewhere).
---   - Icon size and name-length-limit are both live settings (cfg.iconSize,
---     cfg.nameMaxLength) rather than fixed constants; row/container sizing is
---     computed from the current icon size on every apply.
+--   - The configurable mana color applies to the mana% text only -- names
+--     stay class-colored (matches how cast-target text is handled elsewhere).
+--   - Icon hidden: One Line Mode puts name+mana side by side ("Healername
+--     99%"); off (default) stacks mana directly under the name. Neither is
+--     tied to the icon's height/position (there's no icon) -- row height is
+--     computed from the frame's own font size instead.
 -------------------------------------------------------------------------------
 local ADDON_NAME, ns = ...
 local EVL = ns.EVL
@@ -54,17 +57,26 @@ local currentInspect
 local specCache = {}
 
 local FALLBACK_ICON = 135915
--- Used only by the options-page standalone preview (EVL.HealerMana_GetRandomPreviewSample) --
--- Unlock Mode itself shows an empty stub, no sample spec/name/mana content.
+-- Used only by the options-page standalone preview groups -- Unlock Mode
+-- itself shows an empty stub, no sample spec/name/mana content.
 local PREVIEW_SPECS = { 105, 270, 65, 256, 257, 264, 1468 } -- Resto Druid, Mistweaver, Holy Pala, Disc, Holy Priest, Resto Sham, Preservation
--- Deliberately long fake names so the name-length-limit setting is visibly
--- demonstrated in the preview, not just theoretical.
-local PREVIEW_NAMES = { "Thunderstrikeus", "Moonshadowblade", "Emberheartsong" }
+-- Mix of short and long fake names -- the long ones visibly demonstrate the
+-- name-length-limit setting in the preview, not just theoretically; the
+-- short ones show what a healer with an ordinary name actually looks like.
+local PREVIEW_NAMES = {
+    "Zar", "Nyx", "Kael", "Lira", "Thorne", "Vexis", "Draven", "Sable",
+    "Ashwing", "Duskryn",
+    "Thunderstrikeus", "Moonshadowblade", "Emberheartsong", "Frostwhisperus",
+    "Stormbringerae", "Shadowweaveris", "Ironvowborn", "Starfallenus",
+    "Windrunnerae", "Bloodmoonrise",
+}
 local INSPECT_DELAY = 0.05
 
 local DEFAULT_ICON_SIZE = 24
 local ICON_GAP          = 4
 local ROW_SPACING       = 3
+local TEXT_GAP          = 4  -- One Line Mode: gap between name and mana%
+local STACK_GAP         = 2  -- Icon off, stacked: gap between name and mana lines
 
 -------------------------------------------------------------------------------
 --  Forward declarations -- every function referenced by a closure defined
@@ -107,13 +119,16 @@ local ApplyAll
 -------------------------------------------------------------------------------
 --  DB / small leaf helpers
 -------------------------------------------------------------------------------
+-- Master table: { enabled, party = {...}, raid = {...} }.
 local function DB()
     local d = EVL.DB and EVL.DB()
     return d and d.healerMana
 end
 
-local function GetPosKey(key)
-    return key == "party" and "partyPos" or "raidPos"
+-- Per-frame settings table ("party" | "raid").
+local function FrameDB(key)
+    local hm = DB()
+    return hm and hm[key]
 end
 
 local function GetFontPath(fontKey)
@@ -146,25 +161,47 @@ end
 -- construction-shape issue. Reaching pct/100-style arithmetic on a secret
 -- value errors too (confirmed in earlier attempts). So there's no addon-side
 -- way to derive a gradient color from another healer's secret mana% --
--- pct just gets a flat default (white) unless the user picked a custom color.
-local function GetManaTextColor(pct)
-    local cfg = DB()
+-- pct just gets a flat default (#008CFF) unless the user picked a custom color.
+local DEFAULT_MANA_COLOR = { 0x00 / 255, 0x8C / 255, 0xFF / 255 }
+
+local function GetManaTextColor(key, pct)
+    local cfg = FrameDB(key)
     if cfg and cfg.useCustomManaColor then
         return cfg.manaColorR or 1, cfg.manaColorG or 1, cfg.manaColorB or 1, 1
     end
-    return 1, 1, 1, 1
+    return DEFAULT_MANA_COLOR[1], DEFAULT_MANA_COLOR[2], DEFAULT_MANA_COLOR[3], 1
 end
 
-local function GetIconSize()
-    local cfg = DB()
+local function GetIconSize(key)
+    local cfg = FrameDB(key)
     local size = cfg and cfg.iconSize
     if type(size) ~= "number" then return DEFAULT_ICON_SIZE end
     return size
 end
 
-local function IsIconShown()
-    local cfg = DB()
+local function IsIconShown(key)
+    local cfg = FrameDB(key)
     return not cfg or cfg.showIcon ~= false
+end
+
+local function IsOneLineMode(key)
+    local cfg = FrameDB(key)
+    return cfg and cfg.oneLineMode == true
+end
+
+-- Row height only cares about icon size while the icon is actually shown;
+-- once it's off, nothing should key off it anymore (see file header).
+local function TextLineHeight(key)
+    local cfg = FrameDB(key)
+    local fontSize = (cfg and cfg.fontSize) or 12
+    return fontSize + 4
+end
+
+local function GetRowHeight(key)
+    if IsIconShown(key) then return GetIconSize(key) end
+    local lineH = TextLineHeight(key)
+    if IsOneLineMode(key) then return lineH end
+    return lineH * 2 + STACK_GAP
 end
 
 -- #name/string.sub count/cut BYTES, not characters -- every non-Latin letter
@@ -191,9 +228,9 @@ local function Utf8Sub(str, maxLen)
 end
 
 -- maxLen <= 0 (or unset) means unlimited, matching the options slider's "0 = Unlimited".
-local function TruncateHealerName(name)
+local function TruncateHealerName(key, name)
     if not name then return "" end
-    local cfg = DB()
+    local cfg = FrameDB(key)
     local maxLen = cfg and cfg.nameMaxLength
     if not maxLen or maxLen <= 0 or Utf8Len(name) <= maxLen then return name end
     return Utf8Sub(name, maxLen)
@@ -223,8 +260,12 @@ end
 -- width (maxLen "M" characters, a representatively wide glyph) is used
 -- instead, so the column doesn't jitter in width as different healers with
 -- different-length names cycle through.
-local function ComputeTextColumnWidth(names)
-    local cfg = DB()
+--
+-- Icon off + One Line Mode: name and mana sit side by side, so the row needs
+-- their SUM (+ gap), not the max of the two (the stacked/icon-on layouts,
+-- where they share one column).
+local function ComputeTextColumnWidth(key, names)
+    local cfg = FrameDB(key)
     local fontPath = GetFontPath(cfg and cfg.fontFace or "__global")
     local fontSize = (cfg and cfg.fontSize) or 12
     local maxLen = cfg and cfg.nameMaxLength
@@ -241,12 +282,16 @@ local function ComputeTextColumnWidth(names)
     end
 
     local manaW = MeasureTextWidth("100%", fontPath, fontSize)
+
+    if not IsIconShown(key) and IsOneLineMode(key) then
+        return nameW + TEXT_GAP + manaW
+    end
     return math.max(nameW, manaW)
 end
 
-local function GetRowWidth(textColumnWidth)
-    if not IsIconShown() then return textColumnWidth or 0 end
-    return GetIconSize() + ICON_GAP + (textColumnWidth or 0)
+local function GetRowWidth(key, textColumnWidth)
+    if not IsIconShown(key) then return textColumnWidth or 0 end
+    return GetIconSize(key) + ICON_GAP + (textColumnWidth or 0)
 end
 
 -------------------------------------------------------------------------------
@@ -261,19 +306,19 @@ EnsureContainer = function(key)
     if not def then return nil end
 
     local frame = CreateFrame("Frame", "EllesmereUIVoidlol_HealerMana_" .. key, UIParent)
-    frame:SetSize(GetRowWidth(0), GetIconSize()) -- placeholder; corrected by the first RefreshContainer/ShowUnlockStub
+    frame:SetSize(GetRowWidth(key, 0), GetRowHeight(key)) -- placeholder; corrected by the first RefreshContainer/ShowUnlockStub
     frame:Hide()
     containers[key] = frame
     return frame
 end
 
 ApplyPosition = function(key)
-    local cfg = DB()
+    local cfg = FrameDB(key)
     local container = containers[key]
     if not cfg or not container then return end
 
     container:ClearAllPoints()
-    local pos = cfg[GetPosKey(key)]
+    local pos = cfg.pos
     if pos then
         container:SetPoint("CENTER", UIParent, "CENTER", pos.centerX, pos.centerY)
     else
@@ -282,58 +327,59 @@ ApplyPosition = function(key)
 end
 
 -- Growth direction: party always stacks vertically; raid respects the
--- configurable dropdown. Only raid exposes the option (per spec).
+-- configurable dropdown (a raid-only setting, so it lives under raid's own
+-- settings table). Only raid exposes the option (per spec).
 LayoutRows = function(key, textColumnWidth)
-    local cfg = DB()
     local container = containers[key]
     local rows = activeRows[key]
-    if not cfg or not container or not rows then return end
+    if not container or not rows then return end
 
-    local direction = (key == "raid") and (cfg.raidGrowDirection or "VERTICAL") or "VERTICAL"
-    local iconSize = GetIconSize()
-    local rowWidth = GetRowWidth(textColumnWidth)
+    local raidCfg = FrameDB("raid")
+    local direction = (key == "raid") and (raidCfg and raidCfg.raidGrowDirection or "VERTICAL") or "VERTICAL"
+    local rowH = GetRowHeight(key)
+    local rowWidth = GetRowWidth(key, textColumnWidth)
 
     for i, row in ipairs(rows) do
         row:ClearAllPoints()
         if direction == "HORIZONTAL" then
             row:SetPoint("TOPLEFT", container, "TOPLEFT", (i - 1) * (rowWidth + ROW_SPACING), 0)
         else
-            row:SetPoint("TOPLEFT", container, "TOPLEFT", 0, -((i - 1) * (iconSize + ROW_SPACING)))
+            row:SetPoint("TOPLEFT", container, "TOPLEFT", 0, -((i - 1) * (rowH + ROW_SPACING)))
         end
     end
 end
 
 UpdateContainerSize = function(key, textColumnWidth)
-    local cfg = DB()
     local container = containers[key]
-    if not cfg or not container then return end
+    if not container then return end
 
-    local iconSize = GetIconSize()
-    local rowWidth = GetRowWidth(textColumnWidth)
+    local rowH = GetRowHeight(key)
+    local rowWidth = GetRowWidth(key, textColumnWidth)
 
     local count = #activeRows[key]
     if count == 0 then
-        container:SetSize(rowWidth, iconSize)
+        container:SetSize(rowWidth, rowH)
         return
     end
 
-    local direction = (key == "raid") and (cfg.raidGrowDirection or "VERTICAL") or "VERTICAL"
+    local raidCfg = FrameDB("raid")
+    local direction = (key == "raid") and (raidCfg and raidCfg.raidGrowDirection or "VERTICAL") or "VERTICAL"
     if direction == "HORIZONTAL" then
-        container:SetSize((rowWidth * count) + (ROW_SPACING * (count - 1)), iconSize)
+        container:SetSize((rowWidth * count) + (ROW_SPACING * (count - 1)), rowH)
     else
-        container:SetSize(rowWidth, (iconSize * count) + (ROW_SPACING * (count - 1)))
+        container:SetSize(rowWidth, (rowH * count) + (ROW_SPACING * (count - 1)))
     end
 end
 
 -------------------------------------------------------------------------------
 --  Row frames (icon + name + mana%), pooled per container
 -------------------------------------------------------------------------------
-CreateHealerRow = function(container)
+CreateHealerRow = function(key, container)
     local row = CreateFrame("Frame", nil, container)
-    row:SetSize(GetRowWidth(0), GetIconSize()) -- placeholder; ApplyRowStyle corrects it immediately after acquire
+    row:SetSize(GetRowWidth(key, 0), GetRowHeight(key)) -- placeholder; ApplyRowStyle corrects it immediately after acquire
 
     local iconFrame = CreateFrame("Frame", nil, row)
-    iconFrame:SetSize(GetIconSize(), GetIconSize())
+    iconFrame:SetSize(GetIconSize(key), GetIconSize(key))
     iconFrame:SetPoint("LEFT", row, "LEFT", 0, 0)
     local iconBg = iconFrame:CreateTexture(nil, "BACKGROUND")
     iconBg:SetAllPoints()
@@ -369,7 +415,7 @@ AcquireRow = function(key)
     local pool = rowPools[key]
     local row = table.remove(pool)
     if not row then
-        row = CreateHealerRow(containers[key])
+        row = CreateHealerRow(key, containers[key])
     end
     row:SetParent(containers[key])
     activeRows[key][#activeRows[key] + 1] = row
@@ -388,49 +434,54 @@ ReleaseAllRows = function(key)
     end
 end
 
--- Applies every settings-driven per-row visual: font, and icon/row size (so
--- already-created pooled/active rows pick up a live icon-size-slider change
--- instead of staying stuck at their creation-time size).
+-- Applies every settings-driven per-row visual: font, icon show/size, and the
+-- name/mana layout for this frame's (party/raid) OWN settings.
 -- textColumnWidth: the dynamically-measured pixel width needed for the
 -- name/mana text at the current font/size (see ComputeTextColumnWidth) --
 -- callers compute this ONCE per container refresh so every row in that
 -- container shares the same width (uniform column, no per-row jitter).
-ApplyRowStyle = function(row, textColumnWidth)
-    local cfg = DB()
+ApplyRowStyle = function(key, row, textColumnWidth)
+    local cfg = FrameDB(key)
     if not cfg or not row then return end
     local fontPath = GetFontPath(cfg.fontFace or "__global")
     row.nameFS:SetFont(fontPath, cfg.fontSize or 12, "OUTLINE")
     row.manaFS:SetFont(fontPath, cfg.fontSize or 12, "OUTLINE")
 
-    local iconSize = GetIconSize()
-    local showIcon = IsIconShown()
+    local iconSize = GetIconSize(key)
+    local showIcon = IsIconShown(key)
+    local oneLine = IsOneLineMode(key)
     row.iconFrame:SetSize(iconSize, iconSize)
     row.iconFrame:SetShown(showIcon)
 
-    -- Name's top matches the icon's top, mana's bottom matches the icon's
-    -- bottom -- dynamic against whatever the icon size slider is set to,
-    -- no fixed offset to keep in sync. Icon hidden: same TOP/BOTTOM pairing
-    -- but against the row's own edges (row height still equals iconSize),
-    -- reclaiming the icon+gap width.
     row.nameFS:ClearAllPoints()
     row.manaFS:ClearAllPoints()
     if showIcon then
+        -- Name's top matches the icon's top, mana's bottom matches the
+        -- icon's bottom -- dynamic against whatever the icon size slider is
+        -- set to, no fixed offset to keep in sync.
         row.nameFS:SetPoint("TOPLEFT", row.iconFrame, "TOPRIGHT", 4, 0)
         row.manaFS:SetPoint("BOTTOMLEFT", row.iconFrame, "BOTTOMRIGHT", 4, 0)
+    elseif oneLine then
+        -- No icon, single line: name then mana, side by side.
+        row.nameFS:SetPoint("LEFT", row, "LEFT", 0, 0)
+        row.manaFS:SetPoint("LEFT", row.nameFS, "RIGHT", TEXT_GAP, 0)
     else
+        -- No icon, stacked (default): mana anchored directly under the name
+        -- -- tied to the name text itself, not to the icon that's no longer
+        -- there and not to the row's raw edges.
         row.nameFS:SetPoint("TOPLEFT", row, "TOPLEFT", 0, 0)
-        row.manaFS:SetPoint("BOTTOMLEFT", row, "BOTTOMLEFT", 0, 0)
+        row.manaFS:SetPoint("TOPLEFT", row.nameFS, "BOTTOMLEFT", 0, -STACK_GAP)
     end
 
-    row:SetSize(GetRowWidth(textColumnWidth), iconSize)
+    row:SetSize(GetRowWidth(key, textColumnWidth), GetRowHeight(key))
 end
 
-UpdateManaDisplay = function(row, unit, connected)
+UpdateManaDisplay = function(key, row, unit, connected)
     if connected then
         row.icon:SetVertexColor(1, 1, 1)
         local pct = GetManaPercent(unit)
         row.manaFS:SetFormattedText("%.0f%%", pct)
-        row.manaFS:SetTextColor(GetManaTextColor(pct))
+        row.manaFS:SetTextColor(GetManaTextColor(key, pct))
     else
         row.icon:SetVertexColor(0.4, 0.4, 0.4)
         row.manaFS:SetText("OFFLINE")
@@ -561,7 +612,7 @@ RefreshHealerRow = function(unit)
     if not row then return end
     local connected = UnitIsConnected(unit)
     healer.connected = connected
-    UpdateManaDisplay(row, unit, connected)
+    UpdateManaDisplay(key, row, unit, connected)
 end
 
 -------------------------------------------------------------------------------
@@ -576,19 +627,19 @@ RefreshContainer = function(key)
     local healers = currentHealers[key]
     if #healers == 0 then
         container:Hide()
-        UpdateContainerSize(key, ComputeTextColumnWidth({}))
+        UpdateContainerSize(key, ComputeTextColumnWidth(key, {}))
         return
     end
 
     local names = {}
     for _, healer in ipairs(healers) do
-        names[#names + 1] = TruncateHealerName(healer.name)
+        names[#names + 1] = TruncateHealerName(key, healer.name)
     end
-    local textW = ComputeTextColumnWidth(names)
+    local textW = ComputeTextColumnWidth(key, names)
 
     for _, healer in ipairs(healers) do
         local row = AcquireRow(key)
-        ApplyRowStyle(row, textW)
+        ApplyRowStyle(key, row, textW)
 
         local icon
         if healer.specID then
@@ -599,10 +650,10 @@ RefreshContainer = function(key)
         row.icon:SetTexture(icon or FALLBACK_ICON)
         row.icon:SetVertexColor(1, 1, 1)
 
-        row.nameFS:SetText(TruncateHealerName(healer.name))
+        row.nameFS:SetText(TruncateHealerName(key, healer.name))
         row.nameFS:SetTextColor(healer.colorR, healer.colorG, healer.colorB, 1)
 
-        UpdateManaDisplay(row, healer.unit, healer.connected)
+        UpdateManaDisplay(key, row, healer.unit, healer.connected)
         row:Show()
     end
 
@@ -637,8 +688,8 @@ end
 --  Group roster scan
 -------------------------------------------------------------------------------
 FindHealers = function()
-    local cfg = DB()
-    if not cfg or not cfg.enabled then return end
+    local master = DB()
+    if not master or not master.enabled then return end
     if unlockStubActive then return end
 
     wipe(currentHealers.party)
@@ -646,7 +697,8 @@ FindHealers = function()
 
     if IsInGroup() then
         if IsInRaid() then
-            if cfg.showInRaid then
+            local raidCfg = FrameDB("raid")
+            if raidCfg and raidCfg.enabled then
                 local numMembers = GetNumGroupMembers()
                 local count = 0
                 for i = 1, numMembers do
@@ -657,13 +709,16 @@ FindHealers = function()
                     end
                 end
             end
-        elseif cfg.showInParty then
-            local count = 0
-            for i = 1, 4 do
-                local unit = "party" .. i
-                if UnitExists(unit) and UnitGroupRolesAssigned(unit) == "HEALER" then
-                    count = count + 1
-                    AddHealer("party", unit, count)
+        else
+            local partyCfg = FrameDB("party")
+            if partyCfg and partyCfg.enabled then
+                local count = 0
+                for i = 1, 4 do
+                    local unit = "party" .. i
+                    if UnitExists(unit) and UnitGroupRolesAssigned(unit) == "HEALER" then
+                        count = count + 1
+                        AddHealer("party", unit, count)
+                    end
                 end
             end
         end
@@ -690,19 +745,19 @@ end
 --  real container is normally only shown when actual healers are found
 --  (RefreshContainer), so opening Unlock Mode while solo or without a live
 --  healer would otherwise leave nothing to see or drag. The stub's size uses
---  the current font/icon-size/max-name-length settings (via
+--  this frame's current font/icon-size/max-name-length settings (via
 --  ComputeTextColumnWidth) so it still reflects what real content would
 --  occupy, without fabricating any actual row content to show.
 -------------------------------------------------------------------------------
 ShowUnlockStub = function(key)
-    local cfg = DB()
+    local cfg = FrameDB(key)
     local container = EnsureContainer(key)
     if not cfg or not container then return end
 
     ReleaseAllRows(key)
     wipe(currentHealers[key])
 
-    local textW = ComputeTextColumnWidth({})
+    local textW = ComputeTextColumnWidth(key, {})
     UpdateContainerSize(key, textW)
     ApplyPosition(key)
     container:Show()
@@ -733,14 +788,14 @@ TryHookUnlockFrame = function()
 
     unlockHooksInstalled = true
     unlockFrame:HookScript("OnShow", function()
-        local cfg = DB()
-        if not cfg or not cfg.enabled then return end
+        local master = DB()
+        if not master or not master.enabled then return end
         ShowUnlockStubs()
     end)
     unlockFrame:HookScript("OnHide", function()
         unlockStubActive = false
-        local cfg = DB()
-        if cfg and cfg.enabled then
+        local master = DB()
+        if master and master.enabled then
             FindHealers()
         else
             HideAllFrames()
@@ -766,32 +821,32 @@ RegisterUnlock = function()
             getSize        = function()
                 local c = containers[def.key]
                 if c then return c:GetWidth(), c:GetHeight() end
-                return GetRowWidth(0), GetIconSize()
+                return GetRowWidth(def.key, 0), GetRowHeight(def.key)
             end,
             isHidden       = function()
-                local cfg = DB()
-                if not cfg or not cfg.enabled then return true end
-                if def.key == "party" then return not cfg.showInParty end
-                return not cfg.showInRaid
+                local master = DB()
+                if not master or not master.enabled then return true end
+                local fcfg = FrameDB(def.key)
+                return not (fcfg and fcfg.enabled)
             end,
             savePos        = function()
-                local cfg = DB()
+                local fcfg = FrameDB(def.key)
                 local f = containers[def.key]
-                if not cfg or not f or not f:GetCenter() then return end
+                if not fcfg or not f or not f:GetCenter() then return end
                 local cx, cy = f:GetCenter()
                 local upX, upY = UIParent:GetCenter()
                 local fes = f:GetEffectiveScale() or 1
                 local ues = UIParent:GetEffectiveScale() or 1
                 local ratio = fes / ues
-                cfg[GetPosKey(def.key)] = { centerX = cx * ratio - upX, centerY = cy * ratio - upY }
+                fcfg.pos = { centerX = cx * ratio - upX, centerY = cy * ratio - upY }
             end,
             loadPos        = function()
-                local cfg = DB()
-                return cfg and cfg[GetPosKey(def.key)]
+                local fcfg = FrameDB(def.key)
+                return fcfg and fcfg.pos
             end,
             clearPos       = function()
-                local cfg = DB()
-                if cfg then cfg[GetPosKey(def.key)] = nil end
+                local fcfg = FrameDB(def.key)
+                if fcfg then fcfg.pos = nil end
             end,
             applyPos       = function() ApplyPosition(def.key) end,
         })
@@ -844,8 +899,8 @@ end
 --  Apply (called on settings change / login)
 -------------------------------------------------------------------------------
 ApplyAll = function()
-    local cfg = DB()
-    if not cfg or not cfg.enabled then
+    local master = DB()
+    if not master or not master.enabled then
         DisableRuntime()
         HideAllFrames()
         unlockStubActive = false
@@ -860,11 +915,11 @@ ApplyAll = function()
     for _, def in ipairs(CONTAINER_DEFS) do
         local names = {}
         for _, healer in ipairs(currentHealers[def.key]) do
-            names[#names + 1] = TruncateHealerName(healer.name)
+            names[#names + 1] = TruncateHealerName(def.key, healer.name)
         end
-        local textW = ComputeTextColumnWidth(names)
-        for _, row in ipairs(activeRows[def.key]) do ApplyRowStyle(row, textW) end
-        for _, row in ipairs(rowPools[def.key]) do ApplyRowStyle(row, textW) end
+        local textW = ComputeTextColumnWidth(def.key, names)
+        for _, row in ipairs(activeRows[def.key]) do ApplyRowStyle(def.key, row, textW) end
+        for _, row in ipairs(rowPools[def.key]) do ApplyRowStyle(def.key, row, textW) end
     end
 
     EnableRuntime()
@@ -881,42 +936,94 @@ end
 EVL.ApplyHealerMana = ApplyAll
 
 -------------------------------------------------------------------------------
---  Options-page preview row API -- a standalone row, independent of the live
---  containers/Enabled/Unlock Mode, that EUI_Voidlol_Options.lua builds once
---  and re-styles on every settings change. This is what makes the Healer Mana
---  options page always show a live sample, regardless of whether the feature
---  is enabled or Unlock Mode is open.
+--  Options-page preview API -- builds/styles a standalone group of `count`
+--  sample rows for `key` ("party" | "raid"), independent of the live
+--  containers/Enabled/Unlock Mode, laid out the same way
+--  RefreshContainer/LayoutRows would (respecting that frame's own icon/font/
+--  one-line/raid-grow-direction settings). EUI_Voidlol_Options.lua calls this
+--  once for "party" (count 1) and once for "raid" (count 4) so the options
+--  page always shows BOTH frames live, side by side, regardless of whether
+--  the feature is enabled or which group you're actually in.
 -------------------------------------------------------------------------------
-function EVL.HealerMana_CreatePreviewRow(parent)
-    return CreateHealerRow(parent)
+local previewGroups = {} -- key -> { frame, rows = {row1, row2, ...} }
+
+function EVL.HealerMana_EnsurePreviewGroup(key, parent, count)
+    local g = previewGroups[key]
+    if not g then
+        g = { frame = CreateFrame("Frame", nil, parent), rows = {} }
+        previewGroups[key] = g
+    else
+        g.frame:SetParent(parent)
+    end
+    for i = 1, count do
+        if not g.rows[i] then
+            g.rows[i] = CreateHealerRow(key, g.frame)
+        end
+    end
+    for i = count + 1, #g.rows do
+        if g.rows[i] then g.rows[i]:Hide() end
+    end
+    return g.frame
 end
 
--- Picks a random spec/name from the same pools the Unlock Mode preview uses
--- (PREVIEW_SPECS/PREVIEW_NAMES), so the options-page preview varies its icon
--- and name too, not just its mana%, without duplicating those lists.
-function EVL.HealerMana_GetRandomPreviewSample()
-    local specID = PREVIEW_SPECS[math.random(1, #PREVIEW_SPECS)]
-    local name = PREVIEW_NAMES[math.random(1, #PREVIEW_NAMES)]
-    return specID, name
-end
+function EVL.HealerMana_RefreshPreviewGroup(key, count)
+    local g = previewGroups[key]
+    if not g then return 0, 0 end
 
-function EVL.HealerMana_StylePreviewRow(row, specID, fakeName, manaPct)
-    if not row then return end
-    local displayName = TruncateHealerName(fakeName)
-    ApplyRowStyle(row, ComputeTextColumnWidth({ displayName }))
+    local samples, names = {}, {}
+    for i = 1, count do
+        local specID = PREVIEW_SPECS[math.random(1, #PREVIEW_SPECS)]
+        local name = PREVIEW_NAMES[math.random(1, #PREVIEW_NAMES)]
+        local displayName = TruncateHealerName(key, name)
+        samples[i] = { specID = specID, pct = math.random(1, 100), displayName = displayName }
+        names[i] = displayName
+    end
+    local textW = ComputeTextColumnWidth(key, names)
 
-    local _, _, _, icon, _, class = GetSpecializationInfoByID(specID)
-    local r, g, b = GetClassColor(class)
-    row.icon:SetTexture(icon or FALLBACK_ICON)
-    row.icon:SetVertexColor(1, 1, 1)
+    for i = 1, count do
+        local row = g.rows[i]
+        ApplyRowStyle(key, row, textW)
 
-    row.nameFS:SetText(displayName)
-    row.nameFS:SetTextColor(r, g, b, 1)
+        local s = samples[i]
+        local _, _, _, icon, _, class = GetSpecializationInfoByID(s.specID)
+        local r, gc, b = GetClassColor(class)
+        row.icon:SetTexture(icon or FALLBACK_ICON)
+        row.icon:SetVertexColor(1, 1, 1)
 
-    row.manaFS:SetFormattedText("%d%%", manaPct)
-    row.manaFS:SetTextColor(GetManaTextColor(manaPct))
+        row.nameFS:SetText(s.displayName)
+        row.nameFS:SetTextColor(r, gc, b, 1)
 
-    row:Show()
+        row.manaFS:SetFormattedText("%d%%", s.pct)
+        row.manaFS:SetTextColor(GetManaTextColor(key, s.pct))
+
+        row:Show()
+    end
+
+    local rowH = GetRowHeight(key)
+    local rowW = GetRowWidth(key, textW)
+    local raidCfg = FrameDB("raid")
+    local direction = (key == "raid") and (raidCfg and raidCfg.raidGrowDirection or "VERTICAL") or "VERTICAL"
+
+    for i = 1, count do
+        local row = g.rows[i]
+        row:ClearAllPoints()
+        if direction == "HORIZONTAL" then
+            row:SetPoint("TOPLEFT", g.frame, "TOPLEFT", (i - 1) * (rowW + ROW_SPACING), 0)
+        else
+            row:SetPoint("TOPLEFT", g.frame, "TOPLEFT", 0, -((i - 1) * (rowH + ROW_SPACING)))
+        end
+    end
+
+    local totalW, totalH
+    if direction == "HORIZONTAL" then
+        totalW = (rowW * count) + (ROW_SPACING * (count - 1))
+        totalH = rowH
+    else
+        totalW = rowW
+        totalH = (rowH * count) + (ROW_SPACING * (count - 1))
+    end
+    g.frame:SetSize(math.max(1, totalW), math.max(1, totalH))
+    return totalW, totalH
 end
 
 -------------------------------------------------------------------------------
