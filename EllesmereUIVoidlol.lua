@@ -22,6 +22,7 @@ local defaults = {
                     enabled = false,
                     spacing = 12,
                     pos     = nil,
+                    hideWhileChatting = false,
 
                     -- 0 = auto-fit to content; never narrower than that
                     -- regardless of this value (see RefreshStatusBar).

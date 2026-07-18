@@ -475,6 +475,48 @@ local function RegisterUnlock()
 end
 
 -------------------------------------------------------------------------------
+--  Hide while chatting. On this client the chat edit box API moved onto the
+--  ChatFrameUtil table -- ChatFrameUtil.ActivateChat/DeactivateChat are what
+--  actually fires on Enter-to-chat/slash-commands/whispers/etc; the old bare
+--  globals ChatEdit_ActivateChat/DeactivateChat exist but nothing calls them
+--  anymore, so hooking those silently never fires (confirmed against ElvUI's
+--  own Chat.lua, which checks for ChatFrameUtil first and only falls back to
+--  the bare globals when it's absent). Same story for GetActiveWindow.
+-------------------------------------------------------------------------------
+local function IsChatOpen()
+    if _G.ChatFrameUtil and _G.ChatFrameUtil.GetActiveWindow then
+        return _G.ChatFrameUtil.GetActiveWindow() ~= nil
+    end
+    return ChatEdit_GetActiveWindow ~= nil and ChatEdit_GetActiveWindow() ~= nil
+end
+
+local function ShouldShowForChat()
+    local cfg = DB()
+    if not (cfg and cfg.hideWhileChatting) then return true end
+    return not IsChatOpen()
+end
+
+local function UpdateChatVisibility()
+    local cfg = DB()
+    if not container or not cfg or not cfg.enabled then return end
+    container:SetShown(ShouldShowForChat())
+end
+
+local chatHookInstalled = false
+local function EnsureChatHook()
+    if chatHookInstalled then return end
+    if _G.ChatFrameUtil and _G.ChatFrameUtil.ActivateChat then
+        chatHookInstalled = true
+        hooksecurefunc(_G.ChatFrameUtil, "ActivateChat", UpdateChatVisibility)
+        hooksecurefunc(_G.ChatFrameUtil, "DeactivateChat", UpdateChatVisibility)
+    elseif ChatEdit_ActivateChat and ChatEdit_DeactivateChat then
+        chatHookInstalled = true
+        hooksecurefunc("ChatEdit_ActivateChat", UpdateChatVisibility)
+        hooksecurefunc("ChatEdit_DeactivateChat", UpdateChatVisibility)
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Apply (called on settings change / login)
 -------------------------------------------------------------------------------
 function EVL.ApplyStatusBar()
@@ -488,7 +530,8 @@ function EVL.ApplyStatusBar()
     EnsureContainer()
     ApplyPosition()
     RefreshStatusBar()
-    container:Show()
+    container:SetShown(ShouldShowForChat())
     StartTicker()
     RegisterUnlock()
+    EnsureChatHook()
 end

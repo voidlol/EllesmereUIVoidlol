@@ -366,6 +366,18 @@ initFrame:SetScript("OnEvent", function(self)
         y = y - h
 
         _, h = W:DualRow(parent, y,
+            { type="toggle", text="Hide While Chatting",
+              tooltip="Hides the bar whenever a chat edit box is open (Enter to chat, slash commands, whispers, ...), and shows it again as soon as you close it.",
+              disabled=SBOff,
+              getValue=function() local c = SB(); return c and c.hideWhileChatting or false end,
+              setValue=function(v)
+                  local c = SB(); if c then c.hideWhileChatting = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
             { type="toggle", text="Show FPS + Latency",
               tooltip="One block: \"FPS: 134  MS: 44\". Mouseover shows the full latency + FPS tooltip (memory usage, force GC) copied from EllesmereUIDataBars.",
               disabled=SBOff,
