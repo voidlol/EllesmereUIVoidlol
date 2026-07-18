@@ -78,6 +78,7 @@ local defaults = {
                     fadeStart    = 1.0,
                     fadeDuration = 0.5,
                     colorByType  = false, -- color by damage school once the real engine lands; no manual color
+                    prefix       = "", -- only applied to numeric amounts, never to Absorb/Dodge/Parry/etc.
                 },
                 incomingHeal = {
                     enabled      = false,

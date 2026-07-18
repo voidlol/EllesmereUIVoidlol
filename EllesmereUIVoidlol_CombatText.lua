@@ -23,17 +23,19 @@ local ROW_POOL_MAX = 24
 
 local FRAME_DEFS = {
     {
+        -- Bare number: any leading sign comes entirely from cfg.prefix (both
+        -- default to ""), so this never double-signs alongside a "-"/"+" prefix.
         key         = "incomingDamage",
         unlockKey   = "EVL_IncomingDamage",
         label       = "Incoming Damage",
-        previewText = "-12345",
+        previewText = "12345",
         previewR = 1, previewG = 0.25, previewB = 0.25,
     },
     {
         key         = "incomingHeal",
         unlockKey   = "EVL_IncomingHeal",
         label       = "Incoming Heal",
-        previewText = "+12345",
+        previewText = "12345",
         previewR = 0.25, previewG = 1, previewB = 0.35,
     },
 }
@@ -187,7 +189,7 @@ local function AcquireRow(key)
     return row
 end
 
-local function ApplyRowStyle(row, key, amount, isCrit, schoolMask)
+local function ApplyRowStyle(row, key, amount, isCrit, schoolMask, specialText)
     local cfg = DB(key)
     local def = FRAME_DEF_BY_KEY[key]
     if not row or not cfg or not def then return end
@@ -210,9 +212,17 @@ local function ApplyRowStyle(row, key, amount, isCrit, schoolMask)
         row.text:SetPoint("RIGHT", row, "RIGHT", 0, 0)
     end
 
-    local displayAmount = amount == 0 and key == "incomingDamage" and "Absorb" or AbbreviateNumber(amount)
-    if key == "incomingHeal" and type(displayAmount) == "string" then
-        displayAmount = (cfg.prefix or "") .. displayAmount
+    -- Prefix only ever applies to an actual formatted number -- never to a
+    -- special outcome (Absorb, or a test-only Dodge/Parry/etc via
+    -- specialText), so a "-" prefix reads as "-55k" but "Absorb" stays
+    -- "Absorb", not "-Absorb".
+    local displayAmount
+    if specialText then
+        displayAmount = specialText
+    elseif amount == 0 and key == "incomingDamage" then
+        displayAmount = "Absorb"
+    else
+        displayAmount = (cfg.prefix or "") .. AbbreviateNumber(amount)
     end
     row.text:SetText(displayAmount)
 
@@ -252,7 +262,7 @@ local function EnforceNoneRows(key)
     end
 end
 
-local function DisplayIncomingText(key, amount, isCrit, schoolMask)
+local function DisplayIncomingText(key, amount, isCrit, schoolMask, specialText)
     local cfg = DB(key)
     local anchorFrame = frames[key]
     if not cfg or not anchorFrame or cfg.enabled == false or not IsModuleEnabled() then return end
@@ -261,7 +271,7 @@ local function DisplayIncomingText(key, amount, isCrit, schoolMask)
     local row = AcquireRow(key)
     if not row then return end
 
-    ApplyRowStyle(row, key, amount, isCrit, schoolMask)
+    ApplyRowStyle(row, key, amount, isCrit, schoolMask, specialText)
 
     local fadeDuration = math.max(0.1, cfg.fadeDuration or 0.5)
     local stepY = (cfg.fontSize or 22) + 6
@@ -349,11 +359,10 @@ local function ApplyFrameStyle(key)
     f._text:SetFont(fontPath, cfg.fontSize or 22, cfg.outline ~= false and "OUTLINE" or "")
     if key == "incomingHeal" then
         f._text:SetTextColor(cfg.textR or def.previewR, cfg.textG or def.previewG, cfg.textB or def.previewB, 1)
-        f._text:SetText((cfg.prefix or "") .. def.previewText)
     else
         f._text:SetTextColor(def.previewR, def.previewG, def.previewB, 1)
-        f._text:SetText(def.previewText)
     end
+    f._text:SetText((cfg.prefix or "") .. def.previewText)
     f._text:SetJustifyH(cfg.align or "CENTER")
 
     for _, row in ipairs(activeRows[key] or {}) do
@@ -523,9 +532,20 @@ EVL.RegisterCombatTextUnlock = RegisterUnlock
 local testTicker
 local testActive = false
 
+-- Physical, Holy, Fire, Nature, Frost, Shadow, Arcane (real WoW school-mask bits).
+local TEST_SCHOOL_MASKS = { 1, 2, 4, 8, 16, 32, 64 }
+
 local function GenerateTestEvent()
-    local schoolMask = (math.random() < 0.5) and 1 or 4 -- mix physical + a non-physical school
-    DisplayIncomingText("incomingDamage", math.random(1000, 60000), math.random() < 0.2, schoolMask)
+    local roll = math.random()
+    if roll < 0.15 then
+        DisplayIncomingText("incomingDamage", 0, false, TEST_SCHOOL_MASKS[math.random(1, #TEST_SCHOOL_MASKS)]) -- Absorb (amount == 0), any school
+    elseif roll < 0.25 then
+        DisplayIncomingText("incomingDamage", 0, false, 1, "Dodge") -- Dodge/Parry: physical only, you can't dodge a spell
+    elseif roll < 0.35 then
+        DisplayIncomingText("incomingDamage", 0, false, 1, "Parry")
+    else
+        DisplayIncomingText("incomingDamage", math.random(1000, 60000), math.random() < 0.2, TEST_SCHOOL_MASKS[math.random(1, #TEST_SCHOOL_MASKS)])
+    end
     DisplayIncomingText("incomingHeal", math.random(500, 40000), math.random() < 0.2)
 end
 

@@ -762,7 +762,14 @@ initFrame:SetScript("OnEvent", function(self)
                       local c = CT(key); if c then c.colorByType = v end
                       RefreshAll()
                   end },
-                { type="label", text="" })
+                { type="input", text="Prefix",
+                  tooltip="Custom text prepended to every Incoming Damage row, e.g. \"-\" for \"-55k\". Only applied to an actual number -- special outcomes like Absorb/Dodge/Parry are never prefixed.",
+                  inputWidth = 100,
+                  getValue=function() local c = CT(key); return c and c.prefix or "" end,
+                  setValue=function(v)
+                      local c = CT(key); if c then c.prefix = v end
+                      RefreshAll()
+                  end })
             y = y - h
         end
 
