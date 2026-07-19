@@ -361,6 +361,19 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
+        _, h = W:SectionHeader(parent, "CLASS RESOURCES", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Spec-Based Rune Color",
+              tooltip="Death Knight only. Colors runes by your current spec (Blood/Frost/Unholy) instead of the single Runes color from EllesmereUI's Class Resource Colors. Only takes effect while EllesmereUIResourceBars' Class Resource is set to the \"Class Resource Color\" fill mode.",
+              getValue=function() local c = QoL(); return c and c.runesSpecColored or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.runesSpecColored = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
         _, h = W:SectionHeader(parent, "STATUS BAR GENERAL", y); y = y - h
 
         local function SBOff() local c = SB(); return not (c and c.enabled) end

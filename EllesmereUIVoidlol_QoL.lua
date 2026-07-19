@@ -175,7 +175,70 @@ local function ApplyPlayedSuppression()
     end
 end
 
+-------------------------------------------------------------------------------
+--  Spec-Based Rune Color (Death Knight)
+--  EllesmereUI.GetClassResourceColor("Runes") is the single source the
+--  "Class Resource Color" fill mode reads for DK rune pips -- both the live
+--  render in EllesmereUIResourceBars and its own color-picker preview go
+--  through it (see EllesmereUIResourceBars.lua ResolveSecondaryResourceColor
+--  and EUI__General_Options.lua's Runes swatch). Normally it's one flat
+--  color from the Class Resource Colors palette; this hooks it to return a
+--  color keyed off the current spec (Blood/Frost/Unholy) instead, for every
+--  key other than "Runes" (or non-DK) falling straight through untouched.
+--  Only ever installed while actually playing a Death Knight, so the hook
+--  body itself doesn't need to re-check class on every call.
+-------------------------------------------------------------------------------
+local RUNE_SPEC_COLORS = {
+    [1] = { r = 0.77, g = 0.12, b = 0.23 }, -- Blood
+    [2] = { r = 0.00, g = 0.82, b = 1.00 }, -- Frost
+    [3] = { r = 0.42, g = 0.68, b = 0.20 }, -- Unholy
+}
+
+local cachedSpecIndex
+local specWatcher
+
+local function CacheSpecIndex()
+    cachedSpecIndex = GetSpecialization()
+end
+
+local function EnsureSpecWatcher()
+    if specWatcher then return end
+    specWatcher = CreateFrame("Frame")
+    specWatcher:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    specWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+    specWatcher:SetScript("OnEvent", CacheSpecIndex)
+    CacheSpecIndex()
+end
+
+local originalGetClassResourceColor
+
+local function HookedGetClassResourceColor(key)
+    if key == "Runes" then
+        local sc = RUNE_SPEC_COLORS[cachedSpecIndex]
+        if sc then return sc end
+    end
+    return originalGetClassResourceColor(key)
+end
+
+local function ApplyRunesSpecColor()
+    local EUI = _G.EllesmereUI
+    if not (EUI and EUI.GetClassResourceColor) then return end
+    if not originalGetClassResourceColor then
+        originalGetClassResourceColor = EUI.GetClassResourceColor
+    end
+
+    local _, class = UnitClass("player")
+    local cfg = DB()
+    if class == "DEATHKNIGHT" and cfg and cfg.runesSpecColored then
+        EnsureSpecWatcher()
+        EUI.GetClassResourceColor = HookedGetClassResourceColor
+    else
+        EUI.GetClassResourceColor = originalGetClassResourceColor
+    end
+end
+
 function EVL.ApplyQoL()
     ApplyDragonridingOverride()
     ApplyPlayedSuppression()
+    ApplyRunesSpecColor()
 end

@@ -18,6 +18,7 @@ local defaults = {
             qol = {
                 actualDragonridingVisibility = false,
                 suppressAutoPlayed = false,
+                runesSpecColored = false,
 
                 statusBar = {
                     enabled = false,
