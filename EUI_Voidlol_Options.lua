@@ -67,6 +67,7 @@ initFrame:SetScript("OnEvent", function(self)
         return values, order
     end
     local castbarPreview
+    local castbarPreviewHdr
     local castbarHeaderBuilder
     local healerManaPreviewHdr
     local healerManaPartyCaption, healerManaRaidCaption
@@ -86,8 +87,9 @@ initFrame:SetScript("OnEvent", function(self)
     local healerManaOverlaysBuilt = false
     -- Same click-navigation state, for the Target Castbar preview (reused
     -- Unit Frames target preview). See AttachCastbarPreviewOverlays below.
+    -- (No page-level "already built" flag here -- tracked per preview
+    -- object instead, since that object gets rebuilt fresh each redraw.)
     local castbarClickTargets
-    local castbarOverlaysBuilt = false
     -- Which page's header-preview currently owns the shared content-header
     -- frame. HealerMana/InterruptTracker/Castbar all reparent their sample
     -- bars into that one recycled `hdr` object via their own cached
@@ -624,6 +626,14 @@ initFrame:SetScript("OnEvent", function(self)
         if activePreviewPage == PAGE_CASTBAR and castbarPreview and castbarPreview.Update then
             castbarPreview:Update()
             ApplyCastbarPreviewStyle(castbarPreview)
+            -- Update() re-shows whatever it normally shows, dropdown
+            -- included -- re-hide it on every settings-change refresh too,
+            -- not just on the initial build (see onPageCacheRestore for the
+            -- same fix on the close+reopen path, where this was actually
+            -- observed).
+            if castbarPreviewHdr then
+                HideHeaderPreviewDropdown(castbarPreviewHdr, castbarPreview)
+            end
         end
         RefreshHealerManaPreview()
         RefreshInterruptTrackerPreview()
@@ -1398,26 +1408,62 @@ initFrame:SetScript("OnEvent", function(self)
         return btn
     end
 
-    -- Attaches hit overlays to the castbar preview's icon / icon text / bar,
-    -- once BOTH the click-target mapping (built by BuildCastbarPage) and the
-    -- preview (built by BuildCastbarHeaderPreview) exist -- called from both
-    -- places, since which one runs first isn't guaranteed. Only called from
-    -- BuildCastbarHeaderPreview AFTER ApplyCastbarPreviewStyle has run, so
-    -- the icon's uninterruptible-text overlay (which that call creates) is
-    -- always already there by the time this checks for it.
+    -- Attaches hit overlays to the castbar preview's icon / icon text / bar.
+    -- Unlike the Interrupt Tracker / Healer Mana previews (which own
+    -- persistent, never-recreated bar frames), this reuses Unit Frames' OWN
+    -- preview -- its outer wrapper and/or inner sub-widgets (_castbar,
+    -- _castIconFrame) may or may not be the same objects from one header
+    -- rebuild to the next (rebuilds happen on every page display, not just
+    -- the first). Rather than guess at that lifecycle, this just always
+    -- hides whatever overlay buttons it made last time and makes fresh ones
+    -- for whatever the CURRENT sub-widgets are -- cheap, and correct
+    -- regardless of what got recreated underneath.
+    local castbarOverlayButtons = {}
     local function AttachCastbarPreviewOverlays()
-        if castbarOverlaysBuilt then return end
         if not castbarClickTargets then return end
         if not (castbarPreview and castbarPreview._castbar) then return end
-        castbarOverlaysBuilt = true
+
+        for i = 1, #castbarOverlayButtons do
+            castbarOverlayButtons[i]:Hide()
+        end
+        wipe(castbarOverlayButtons)
 
         local lvl = castbarPreview:GetFrameLevel() + 30
-        CreateCastbarHitOverlay(castbarPreview._castbar, "castbar", false, lvl)
+        castbarOverlayButtons[#castbarOverlayButtons + 1] =
+            CreateCastbarHitOverlay(castbarPreview._castbar, "castbar", false, lvl)
         local iconFrame = castbarPreview._castIconFrame
         if iconFrame then
-            CreateCastbarHitOverlay(iconFrame, "icon", false, lvl + 10)
+            castbarOverlayButtons[#castbarOverlayButtons + 1] =
+                CreateCastbarHitOverlay(iconFrame, "icon", false, lvl + 10)
             local fs = iconFrame._evlUninterruptibleFS
-            if fs then CreateCastbarHitOverlay(fs, "iconText", true, lvl + 15) end
+            if fs then
+                castbarOverlayButtons[#castbarOverlayButtons + 1] =
+                    CreateCastbarHitOverlay(fs, "iconText", true, lvl + 15)
+            end
+        end
+    end
+
+    -- Everything that needs to be true about the reused Unit Frames preview
+    -- for THIS page specifically -- buffs/debuffs hidden, click overlays
+    -- attached, dropdown hidden -- bundled into one idempotent call so it
+    -- can be re-run from wherever the preview might become visible again
+    -- (initial build, onPageCacheRestore, RefreshAll, or the preview's own
+    -- OnShow) without duplicating the list of steps at each call site.
+    local function PolishCastbarPreview()
+        if not castbarPreview then return end
+        if castbarPreview._buffIcons then
+            for i = 1, #castbarPreview._buffIcons do
+                if castbarPreview._buffIcons[i] then castbarPreview._buffIcons[i]:Hide() end
+            end
+        end
+        if castbarPreview._debuffIcons then
+            for i = 1, #castbarPreview._debuffIcons do
+                if castbarPreview._debuffIcons[i] then castbarPreview._debuffIcons[i]:Hide() end
+            end
+        end
+        AttachCastbarPreviewOverlays()
+        if castbarPreviewHdr then
+            HideHeaderPreviewDropdown(castbarPreviewHdr, castbarPreview)
         end
     end
 
@@ -1429,6 +1475,10 @@ initFrame:SetScript("OnEvent", function(self)
     -- regardless, instead of asking the user to go open that page first.
     -- The shared content-header methods are stubbed for the duration so the
     -- hidden build can't clobber whatever's actually on screen right now.
+    -- (Previously suspected of causing the dropdown/click-overlay breakage
+    -- on tab-switch -- it wasn't; that was onPageCacheRestore never
+    -- re-polishing the preview on a same-session tab switch, fixed above.
+    -- Safe to bring back now that the real cause is fixed.)
     local function PrebuildUnitFramesPreviewOnce(ufConfig)
         if EllesmereUI._evlUFPrebuilt or not (ufConfig and ufConfig.buildPage) then return end
         EllesmereUI._evlUFPrebuilt = true
@@ -1445,6 +1495,7 @@ initFrame:SetScript("OnEvent", function(self)
 
     local function BuildCastbarHeaderPreview(hdr, hdrW)
         activePreviewPage = PAGE_CASTBAR
+        castbarPreviewHdr = hdr
         local modules = EllesmereUI and EllesmereUI._modules
         local ufConfig = modules and modules.EllesmereUIUnitFrames
         local ufBuilder = ufConfig and ufConfig.getHeaderBuilder and ufConfig.getHeaderBuilder("Main Frames")
@@ -1488,24 +1539,23 @@ initFrame:SetScript("OnEvent", function(self)
             castbarPreview:SetPoint("TOP", hdr, "TOP", 0, y)
             castbarPreview._lastOY = y
             ApplyCastbarPreviewStyle(castbarPreview)
+            PolishCastbarPreview()
 
-            -- Only the castbar itself is relevant to this page -- buffs/
-            -- debuffs belong to Unit Frames' own settings, not ours. They're
-            -- unconditionally created by the shared preview and re-shown per
-            -- their own live settings on every rebuild, so hide them here
-            -- every time too (not just once).
-            if castbarPreview._buffIcons then
-                for i = 1, #castbarPreview._buffIcons do
-                    if castbarPreview._buffIcons[i] then castbarPreview._buffIcons[i]:Hide() end
-                end
+            -- Belt-and-suspenders: a same-session tab switch back to this
+            -- page doesn't re-run this builder at all (EllesmereUI just
+            -- re-parents previously-stashed header frames and shows them --
+            -- see onPageCacheRestore for the module hook that fires
+            -- instead). Whatever that reparent-and-show sequence triggers on
+            -- the Unit Frames side (its own Update()-driven refresh) can
+            -- re-reveal the dropdown/buffs AFTER our onPageCacheRestore fix
+            -- already ran, if its own refresh is asynchronous. Hooking the
+            -- preview's own OnShow re-polishes every time it actually
+            -- becomes visible again, regardless of exactly when that
+            -- happens or what triggered it -- no timing guesswork needed.
+            if not castbarPreview._evlOnShowHooked then
+                castbarPreview._evlOnShowHooked = true
+                castbarPreview:HookScript("OnShow", function() PolishCastbarPreview() end)
             end
-            if castbarPreview._debuffIcons then
-                for i = 1, #castbarPreview._debuffIcons do
-                    if castbarPreview._debuffIcons[i] then castbarPreview._debuffIcons[i]:Hide() end
-                end
-            end
-
-            AttachCastbarPreviewOverlays()
         end
 
         HideHeaderPreviewDropdown(hdr, castbarPreview)
@@ -2433,13 +2483,25 @@ initFrame:SetScript("OnEvent", function(self)
             onPageCacheRestore = function(pageName)
                 activePreviewPage = pageName
                 if pageName == PAGE_CASTBAR and castbarPreview and castbarPreview.Update then
+                    -- Update() is UnitFrames' own generic refresh -- it knows
+                    -- nothing about this page's dropdown-hiding/click-overlay
+                    -- needs, so PolishCastbarPreview has to re-run by hand
+                    -- every time this fires, not just on the original build.
+                    -- Re-checked on a couple of staggered delays too, in
+                    -- case Update()'s own refresh is itself deferred a frame
+                    -- or two and would otherwise win the race and re-reveal
+                    -- the dropdown after we already hid it.
                     castbarPreview:Update()
-                    C_Timer.After(0, function()
-                        if castbarPreview and castbarPreview.Update then
-                            castbarPreview:Update()
-                            ApplyCastbarPreviewStyle(castbarPreview)
-                        end
-                    end)
+                    PolishCastbarPreview()
+                    for _, delay in ipairs({ 0, 0.15, 0.3 }) do
+                        C_Timer.After(delay, function()
+                            if castbarPreview and castbarPreview.Update then
+                                castbarPreview:Update()
+                                ApplyCastbarPreviewStyle(castbarPreview)
+                                PolishCastbarPreview()
+                            end
+                        end)
+                    end
                 end
                 if pageName == PAGE_HEALER_MANA then
                     RefreshHealerManaPreview()
