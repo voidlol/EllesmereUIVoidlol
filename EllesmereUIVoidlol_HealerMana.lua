@@ -988,6 +988,14 @@ function EVL.HealerMana_EnsurePreviewGroup(key, parent, count)
     return g.frame
 end
 
+-- Exposes the persistent preview row frames (each with .iconFrame/.nameFS/
+-- .manaFS) so EUI_Voidlol_Options.lua can attach click-to-navigate hit
+-- overlays directly to their sub-parts.
+function EVL.HealerMana_GetPreviewRows(key)
+    local g = previewGroups[key]
+    return g and g.rows
+end
+
 function EVL.HealerMana_RefreshPreviewGroup(key, count)
     local g = previewGroups[key]
     if not g then return 0, 0 end

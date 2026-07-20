@@ -80,6 +80,14 @@ initFrame:SetScript("OnEvent", function(self)
     -- See AttachInterruptTrackerPreviewOverlays below.
     local interruptTrackerClickTargets
     local interruptTrackerOverlaysBuilt = false
+    -- Same click-navigation state, for the Healer Mana preview (party/raid
+    -- sample rows). See AttachHealerManaPreviewOverlays below.
+    local healerManaClickTargets
+    local healerManaOverlaysBuilt = false
+    -- Same click-navigation state, for the Target Castbar preview (reused
+    -- Unit Frames target preview). See AttachCastbarPreviewOverlays below.
+    local castbarClickTargets
+    local castbarOverlaysBuilt = false
     -- Which page's header-preview currently owns the shared content-header
     -- frame. HealerMana/InterruptTracker/Castbar all reparent their sample
     -- bars into that one recycled `hdr` object via their own cached
@@ -284,6 +292,127 @@ initFrame:SetScript("OnEvent", function(self)
     local HEALER_MANA_PARTY_COUNT = 1
     local HEALER_MANA_RAID_COUNT  = 4
 
+    -- CLICK NAVIGATION for the Healer Mana preview (party/raid sample rows)
+    -- -- same pattern as the Interrupt Tracker preview above (and
+    -- EllesmereUIUnitFrames' preview, which this was originally copied from).
+    local hmGlowFrame
+    local function PlayHealerManaGlow(targetFrame)
+        if not targetFrame then return end
+        if not hmGlowFrame then
+            hmGlowFrame = CreateFrame("Frame")
+            local c = EllesmereUI.ELLESMERE_GREEN
+            local function MkEdge()
+                local t = hmGlowFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+                t:SetColorTexture(c.r, c.g, c.b, 1)
+                return t
+            end
+            hmGlowFrame._top = MkEdge()
+            hmGlowFrame._bot = MkEdge()
+            hmGlowFrame._lft = MkEdge()
+            hmGlowFrame._rgt = MkEdge()
+            hmGlowFrame._top:SetHeight(2)
+            hmGlowFrame._top:SetPoint("TOPLEFT"); hmGlowFrame._top:SetPoint("TOPRIGHT")
+            hmGlowFrame._bot:SetHeight(2)
+            hmGlowFrame._bot:SetPoint("BOTTOMLEFT"); hmGlowFrame._bot:SetPoint("BOTTOMRIGHT")
+            hmGlowFrame._lft:SetWidth(2)
+            hmGlowFrame._lft:SetPoint("TOPLEFT", hmGlowFrame._top, "BOTTOMLEFT")
+            hmGlowFrame._lft:SetPoint("BOTTOMLEFT", hmGlowFrame._bot, "TOPLEFT")
+            hmGlowFrame._rgt:SetWidth(2)
+            hmGlowFrame._rgt:SetPoint("TOPRIGHT", hmGlowFrame._top, "BOTTOMRIGHT")
+            hmGlowFrame._rgt:SetPoint("BOTTOMRIGHT", hmGlowFrame._bot, "TOPRIGHT")
+        end
+        hmGlowFrame:SetParent(targetFrame)
+        hmGlowFrame:SetAllPoints(targetFrame)
+        hmGlowFrame:SetFrameLevel(targetFrame:GetFrameLevel() + 5)
+        hmGlowFrame:SetAlpha(1)
+        hmGlowFrame:Show()
+        local elapsed = 0
+        hmGlowFrame:SetScript("OnUpdate", function(self, dt)
+            elapsed = elapsed + dt
+            if elapsed >= 0.75 then
+                self:Hide(); self:SetScript("OnUpdate", nil); return
+            end
+            self:SetAlpha(1 - elapsed / 0.75)
+        end)
+    end
+
+    local function NavigateToHealerManaSetting(key)
+        local m = healerManaClickTargets and healerManaClickTargets[key]
+        if not m or not m.section or not m.target then return end
+        local sf = EllesmereUI._scrollFrame
+        if not sf then return end
+        local _, _, _, _, headerY = m.section:GetPoint(1)
+        if not headerY then return end
+        local scrollPos = math.max(0, math.abs(headerY) - 40)
+        EllesmereUI.SmoothScrollTo(scrollPos)
+        local glowTarget = m.target
+        if m.slotSide then
+            local region = (m.slotSide == "left") and m.target._leftRegion or m.target._rightRegion
+            if region then glowTarget = region end
+        end
+        C_Timer.After(0.15, function() PlayHealerManaGlow(glowTarget) end)
+    end
+
+    local function CreateHealerManaHitOverlay(element, mappingKey, isText, frameLevelOverride)
+        local anchor = isText and element:GetParent() or element
+        if not anchor.CreateTexture then anchor = anchor:GetParent() end
+        local btn = CreateFrame("Button", nil, anchor)
+        if isText then
+            local function ResizeToText()
+                local ok, tw, th = pcall(function()
+                    local w = element:GetStringWidth() or 0
+                    local hh = element:GetStringHeight() or 0
+                    if w < 4 then w = 4 end
+                    if hh < 4 then hh = 4 end
+                    return w, hh
+                end)
+                if not ok then tw = 40; th = 12 end
+                btn:SetSize(tw + 4, th + 4)
+            end
+            ResizeToText()
+            local justify = element:GetJustifyH()
+            if justify == "RIGHT" then btn:SetPoint("RIGHT", element, "RIGHT", 2, 0)
+            elseif justify == "CENTER" then btn:SetPoint("CENTER", element, "CENTER", 0, 0)
+            else btn:SetPoint("LEFT", element, "LEFT", -2, 0) end
+            btn:SetScript("OnShow", function() ResizeToText() end)
+        else
+            btn:SetAllPoints(element)
+        end
+        btn:SetFrameLevel(frameLevelOverride or (anchor:GetFrameLevel() + 20))
+        btn:RegisterForClicks("LeftButtonDown")
+        local c = EllesmereUI.ELLESMERE_GREEN
+        local brd = EllesmereUI.PP.CreateBorder(btn, c.r, c.g, c.b, 1, 2, "OVERLAY", 7)
+        brd:Hide()
+        btn:SetScript("OnEnter", function() brd:Show() end)
+        btn:SetScript("OnLeave", function() brd:Hide() end)
+        btn:SetScript("OnMouseDown", function() NavigateToHealerManaSetting(mappingKey) end)
+        return btn
+    end
+
+    -- Attaches hit overlays to every party/raid preview row, once BOTH the
+    -- click-target mapping (built by BuildHealerManaPage) and the preview
+    -- rows (built by RefreshHealerManaPreview) exist. Raid's rows all share
+    -- the same "raid_*" keys since one setting applies to all of them.
+    local function AttachHealerManaPreviewOverlays()
+        if healerManaOverlaysBuilt then return end
+        if not healerManaClickTargets then return end
+        if not EVL.HealerMana_GetPreviewRows then return end
+        local partyRows = EVL.HealerMana_GetPreviewRows("party")
+        local raidRows = EVL.HealerMana_GetPreviewRows("raid")
+        if not (partyRows and partyRows[1] and raidRows and raidRows[HEALER_MANA_RAID_COUNT]) then return end
+        healerManaOverlaysBuilt = true
+
+        local function AttachRow(row, prefix)
+            local lvl = row:GetFrameLevel() + 20
+            if row.iconFrame then CreateHealerManaHitOverlay(row.iconFrame, prefix .. "_icon", false, lvl) end
+            if row.nameFS then CreateHealerManaHitOverlay(row.nameFS, prefix .. "_name", true, lvl + 5) end
+            if row.manaFS then CreateHealerManaHitOverlay(row.manaFS, prefix .. "_mana", true, lvl + 5) end
+        end
+
+        for _, row in ipairs(partyRows) do AttachRow(row, "party") end
+        for _, row in ipairs(raidRows) do AttachRow(row, "raid") end
+    end
+
     local function RefreshHealerManaPreview()
         if activePreviewPage ~= PAGE_HEALER_MANA then return end
         if not healerManaPreviewHdr then return end
@@ -330,6 +459,7 @@ initFrame:SetScript("OnEvent", function(self)
         raidFrame:Show()
 
         local captionH = healerManaPartyCaption:GetStringHeight() or 12
+        AttachHealerManaPreviewOverlays()
         return TOP_PAD + captionH + CAPTION_GAP + math.max(ph, rh) + 10
     end
 
@@ -1172,6 +1302,147 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  Target Castbar page
     ---------------------------------------------------------------------------
+    -- CLICK NAVIGATION for the Target Castbar preview -- same pattern as the
+    -- Interrupt Tracker / Healer Mana previews above.
+    local cbGlowFrame
+    local function PlayCastbarGlow(targetFrame)
+        if not targetFrame then return end
+        if not cbGlowFrame then
+            cbGlowFrame = CreateFrame("Frame")
+            local c = EllesmereUI.ELLESMERE_GREEN
+            local function MkEdge()
+                local t = cbGlowFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+                t:SetColorTexture(c.r, c.g, c.b, 1)
+                return t
+            end
+            cbGlowFrame._top = MkEdge()
+            cbGlowFrame._bot = MkEdge()
+            cbGlowFrame._lft = MkEdge()
+            cbGlowFrame._rgt = MkEdge()
+            cbGlowFrame._top:SetHeight(2)
+            cbGlowFrame._top:SetPoint("TOPLEFT"); cbGlowFrame._top:SetPoint("TOPRIGHT")
+            cbGlowFrame._bot:SetHeight(2)
+            cbGlowFrame._bot:SetPoint("BOTTOMLEFT"); cbGlowFrame._bot:SetPoint("BOTTOMRIGHT")
+            cbGlowFrame._lft:SetWidth(2)
+            cbGlowFrame._lft:SetPoint("TOPLEFT", cbGlowFrame._top, "BOTTOMLEFT")
+            cbGlowFrame._lft:SetPoint("BOTTOMLEFT", cbGlowFrame._bot, "TOPLEFT")
+            cbGlowFrame._rgt:SetWidth(2)
+            cbGlowFrame._rgt:SetPoint("TOPRIGHT", cbGlowFrame._top, "BOTTOMRIGHT")
+            cbGlowFrame._rgt:SetPoint("BOTTOMRIGHT", cbGlowFrame._bot, "TOPRIGHT")
+        end
+        cbGlowFrame:SetParent(targetFrame)
+        cbGlowFrame:SetAllPoints(targetFrame)
+        cbGlowFrame:SetFrameLevel(targetFrame:GetFrameLevel() + 5)
+        cbGlowFrame:SetAlpha(1)
+        cbGlowFrame:Show()
+        local elapsed = 0
+        cbGlowFrame:SetScript("OnUpdate", function(self, dt)
+            elapsed = elapsed + dt
+            if elapsed >= 0.75 then
+                self:Hide(); self:SetScript("OnUpdate", nil); return
+            end
+            self:SetAlpha(1 - elapsed / 0.75)
+        end)
+    end
+
+    local function NavigateToCastbarSetting(key)
+        local m = castbarClickTargets and castbarClickTargets[key]
+        if not m or not m.section or not m.target then return end
+        local sf = EllesmereUI._scrollFrame
+        if not sf then return end
+        local _, _, _, _, headerY = m.section:GetPoint(1)
+        if not headerY then return end
+        local scrollPos = math.max(0, math.abs(headerY) - 40)
+        EllesmereUI.SmoothScrollTo(scrollPos)
+        local glowTarget = m.target
+        if m.slotSide then
+            local region = (m.slotSide == "left") and m.target._leftRegion or m.target._rightRegion
+            if region then glowTarget = region end
+        end
+        C_Timer.After(0.15, function() PlayCastbarGlow(glowTarget) end)
+    end
+
+    local function CreateCastbarHitOverlay(element, mappingKey, isText, frameLevelOverride)
+        local anchor = isText and element:GetParent() or element
+        if not anchor.CreateTexture then anchor = anchor:GetParent() end
+        local btn = CreateFrame("Button", nil, anchor)
+        if isText then
+            local function ResizeToText()
+                local ok, tw, th = pcall(function()
+                    local w = element:GetStringWidth() or 0
+                    local hh = element:GetStringHeight() or 0
+                    if w < 4 then w = 4 end
+                    if hh < 4 then hh = 4 end
+                    return w, hh
+                end)
+                if not ok then tw = 40; th = 12 end
+                btn:SetSize(tw + 4, th + 4)
+            end
+            ResizeToText()
+            local justify = element:GetJustifyH()
+            if justify == "RIGHT" then btn:SetPoint("RIGHT", element, "RIGHT", 2, 0)
+            elseif justify == "CENTER" then btn:SetPoint("CENTER", element, "CENTER", 0, 0)
+            else btn:SetPoint("LEFT", element, "LEFT", -2, 0) end
+            btn:SetScript("OnShow", function() ResizeToText() end)
+        else
+            btn:SetAllPoints(element)
+        end
+        btn:SetFrameLevel(frameLevelOverride or (anchor:GetFrameLevel() + 20))
+        btn:RegisterForClicks("LeftButtonDown")
+        local c = EllesmereUI.ELLESMERE_GREEN
+        local brd = EllesmereUI.PP.CreateBorder(btn, c.r, c.g, c.b, 1, 2, "OVERLAY", 7)
+        brd:Hide()
+        btn:SetScript("OnEnter", function() brd:Show() end)
+        btn:SetScript("OnLeave", function() brd:Hide() end)
+        btn:SetScript("OnMouseDown", function() NavigateToCastbarSetting(mappingKey) end)
+        return btn
+    end
+
+    -- Attaches hit overlays to the castbar preview's icon / icon text / bar,
+    -- once BOTH the click-target mapping (built by BuildCastbarPage) and the
+    -- preview (built by BuildCastbarHeaderPreview) exist -- called from both
+    -- places, since which one runs first isn't guaranteed. Only called from
+    -- BuildCastbarHeaderPreview AFTER ApplyCastbarPreviewStyle has run, so
+    -- the icon's uninterruptible-text overlay (which that call creates) is
+    -- always already there by the time this checks for it.
+    local function AttachCastbarPreviewOverlays()
+        if castbarOverlaysBuilt then return end
+        if not castbarClickTargets then return end
+        if not (castbarPreview and castbarPreview._castbar) then return end
+        castbarOverlaysBuilt = true
+
+        local lvl = castbarPreview:GetFrameLevel() + 30
+        CreateCastbarHitOverlay(castbarPreview._castbar, "castbar", false, lvl)
+        local iconFrame = castbarPreview._castIconFrame
+        if iconFrame then
+            CreateCastbarHitOverlay(iconFrame, "icon", false, lvl + 10)
+            local fs = iconFrame._evlUninterruptibleFS
+            if fs then CreateCastbarHitOverlay(fs, "iconText", true, lvl + 15) end
+        end
+    end
+
+    -- EllesmereUIUnitFrames' own "Main Frames" header-builder is a lazily-
+    -- assigned local in ITS options file, only set as a side effect of that
+    -- page's own build function actually running -- i.e. only once the user
+    -- has opened Unit Frames' options at least once this session. Force
+    -- that build ONCE into a hidden, off-screen frame so it happens
+    -- regardless, instead of asking the user to go open that page first.
+    -- The shared content-header methods are stubbed for the duration so the
+    -- hidden build can't clobber whatever's actually on screen right now.
+    local function PrebuildUnitFramesPreviewOnce(ufConfig)
+        if EllesmereUI._evlUFPrebuilt or not (ufConfig and ufConfig.buildPage) then return end
+        EllesmereUI._evlUFPrebuilt = true
+        local saved = {}
+        for _, m in ipairs({ "SetContentHeader", "UpdateContentHeaderHeight", "SetContentHeaderHeightSilent", "ClearContentHeader", "HideContentHeader" }) do
+            saved[m] = EllesmereUI[m]
+            EllesmereUI[m] = function() end
+        end
+        local hidden = CreateFrame("Frame", nil, UIParent)
+        hidden:Hide()
+        pcall(ufConfig.buildPage, "Main Frames", hidden, -6)
+        for m, fn in pairs(saved) do EllesmereUI[m] = fn end
+    end
+
     local function BuildCastbarHeaderPreview(hdr, hdrW)
         activePreviewPage = PAGE_CASTBAR
         local modules = EllesmereUI and EllesmereUI._modules
@@ -1182,6 +1453,11 @@ initFrame:SetScript("OnEvent", function(self)
         castbarPreview = nil
 
         if not ufBuilder then
+            PrebuildUnitFramesPreviewOnce(ufConfig)
+            ufBuilder = ufConfig and ufConfig.getHeaderBuilder and ufConfig.getHeaderBuilder("Main Frames")
+        end
+
+        if not ufBuilder then
             local fontPath = (EllesmereUI.GetFontPath and EllesmereUI.GetFontPath()) or "Fonts\\FRIZQT__.TTF"
             local fs = hdr._evlFallbackFS or hdr:CreateFontString(nil, "OVERLAY")
             hdr._evlFallbackFS = fs
@@ -1189,7 +1465,7 @@ initFrame:SetScript("OnEvent", function(self)
             fs:SetTextColor(1, 1, 1, 0.65)
             fs:ClearAllPoints()
             fs:SetPoint("TOP", hdr, "TOP", 0, -28)
-            fs:SetText("Open Unit Frames once, then reopen this page to initialize the target preview.")
+            fs:SetText("Target preview unavailable (EllesmereUIUnitFrames not loaded).")
             fs:Show()
             return 80
         end
@@ -1212,6 +1488,24 @@ initFrame:SetScript("OnEvent", function(self)
             castbarPreview:SetPoint("TOP", hdr, "TOP", 0, y)
             castbarPreview._lastOY = y
             ApplyCastbarPreviewStyle(castbarPreview)
+
+            -- Only the castbar itself is relevant to this page -- buffs/
+            -- debuffs belong to Unit Frames' own settings, not ours. They're
+            -- unconditionally created by the shared preview and re-shown per
+            -- their own live settings on every rebuild, so hide them here
+            -- every time too (not just once).
+            if castbarPreview._buffIcons then
+                for i = 1, #castbarPreview._buffIcons do
+                    if castbarPreview._buffIcons[i] then castbarPreview._buffIcons[i]:Hide() end
+                end
+            end
+            if castbarPreview._debuffIcons then
+                for i = 1, #castbarPreview._debuffIcons do
+                    if castbarPreview._debuffIcons[i] then castbarPreview._debuffIcons[i]:Hide() end
+                end
+            end
+
+            AttachCastbarPreviewOverlays()
         end
 
         HideHeaderPreviewDropdown(hdr, castbarPreview)
@@ -1245,13 +1539,17 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "ICON", y); y = y - h
+        -- Captured so the preview's click-to-navigate overlays (attached at
+        -- the end of this function) can scroll to / glow the exact row.
+        local iconSection, iconRow, iconTextRow, barSection, overlayRow
+
+        iconSection, h = W:SectionHeader(parent, "ICON", y); y = y - h
 
         local function CastbarOff() local c = Castbar(); return not c or c.enabled == false end
         local function IconNotDetached() local c = Castbar(); return CastbarOff() or not (c and c.detachIcon) end
         local function IconTextOff() local c = Castbar(); return CastbarOff() or not (c and c.showUninterruptibleText) end
 
-        _, h = W:DualRow(parent, y,
+        iconRow, h = W:DualRow(parent, y,
             { type="toggle", text="Detach Icon",
               tooltip="Moves the cast icon off the castbar so it can be positioned independently.",
               disabled=CastbarOff,
@@ -1336,7 +1634,7 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:DualRow(parent, y,
+        iconTextRow, h = W:DualRow(parent, y,
             { type="input", text="Icon Text",
               inputWidth = 60,
               disabled=IconTextOff,
@@ -1378,9 +1676,9 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "BAR", y); y = y - h
+        barSection, h = W:SectionHeader(parent, "BAR", y); y = y - h
 
-        _, h = W:DualRow(parent, y,
+        overlayRow, h = W:DualRow(parent, y,
             { type="toggle", text="Overlay on Target Frame",
               tooltip="Makes the castbar itself transparent and overlays it on the target frame, leaving only text and spark visible.",
               disabled=CastbarOff,
@@ -1391,6 +1689,13 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="label", text="" })
         y = y - h
+
+        castbarClickTargets = {
+            icon     = { section = iconSection, target = iconRow },
+            iconText = { section = iconSection, target = iconTextRow },
+            castbar  = { section = barSection,  target = overlayRow },
+        }
+        AttachCastbarPreviewOverlays()
 
         return math.abs(y)
     end
@@ -1436,10 +1741,16 @@ initFrame:SetScript("OnEvent", function(self)
         local function ManaColorOff(key) local c = HMFrame(key); return not (c and c.useCustomManaColor) end
         local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
 
+        -- Captured per key ("party"/"raid") so the preview's click-to-
+        -- navigate overlays (attached after both sections are built) can
+        -- scroll to / glow the exact row for whichever frame was clicked.
+        local sectionRefs = {}
+
         -- Every visual setting is independent per frame; called once for
         -- "party" and once for "raid" below.
         local function BuildHealerFrameSection(sectionLabel, key)
-            _, h = W:SectionHeader(parent, sectionLabel, y); y = y - h
+            local sectionFrame, iconRow, fontRow, manaColorRow
+            sectionFrame, h = W:SectionHeader(parent, sectionLabel, y); y = y - h
 
             local raidRow = (key == "raid") and
                 { type="dropdown", text="Raid Grow Direction",
@@ -1464,7 +1775,7 @@ initFrame:SetScript("OnEvent", function(self)
                 raidRow)
             y = y - h
 
-            _, h = W:DualRow(parent, y,
+            iconRow, h = W:DualRow(parent, y,
                 { type="toggle", text="Show Icon",
                   tooltip="Shows the healer's spec icon next to their name. Off collapses the row to text only.",
                   getValue=function() local c = HMFrame(key); return c and c.showIcon ~= false end,
@@ -1502,7 +1813,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end })
             y = y - h
 
-            _, h = W:DualRow(parent, y,
+            fontRow, h = W:DualRow(parent, y,
                 { type="dropdown", text="Font",
                   values = fontValues, order = fontOrder,
                   getValue=function() local c = HMFrame(key); return c and c.fontFace or "__global" end,
@@ -1519,7 +1830,7 @@ initFrame:SetScript("OnEvent", function(self)
                   end })
             y = y - h
 
-            _, h = W:DualRow(parent, y,
+            manaColorRow, h = W:DualRow(parent, y,
                 { type="toggle", text="Use Custom Mana Color",
                   tooltip="When off, mana% text uses the default color (#008CFF).",
                   getValue=function() local c = HMFrame(key); return c and c.useCustomManaColor or false end,
@@ -1540,6 +1851,8 @@ initFrame:SetScript("OnEvent", function(self)
                       RefreshAll()
                   end })
             y = y - h
+
+            sectionRefs[key] = { section = sectionFrame, iconRow = iconRow, fontRow = fontRow, manaColorRow = manaColorRow }
         end
 
         _, h = W:SectionHeader(parent, "GENERAL", y); y = y - h
@@ -1558,6 +1871,17 @@ initFrame:SetScript("OnEvent", function(self)
 
         BuildHealerFrameSection("PARTY", "party")
         BuildHealerFrameSection("RAID", "raid")
+
+        local partyRefs, raidRefs = sectionRefs.party, sectionRefs.raid
+        healerManaClickTargets = {
+            party_icon = { section = partyRefs.section, target = partyRefs.iconRow },
+            party_name = { section = partyRefs.section, target = partyRefs.fontRow },
+            party_mana = { section = partyRefs.section, target = partyRefs.manaColorRow, slotSide = "right" },
+            raid_icon  = { section = raidRefs.section,  target = raidRefs.iconRow },
+            raid_name  = { section = raidRefs.section,  target = raidRefs.fontRow },
+            raid_mana  = { section = raidRefs.section,  target = raidRefs.manaColorRow, slotSide = "right" },
+        }
+        AttachHealerManaPreviewOverlays()
 
         return math.abs(y)
     end
