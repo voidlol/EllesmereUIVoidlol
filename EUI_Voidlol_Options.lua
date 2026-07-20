@@ -22,6 +22,7 @@ local function GetAddonVersion()
 end
 
 local PAGE_QOL          = "QoL"
+local PAGE_TWEAKS       = "Tweaks"
 local PAGE_QUICK_FOCUS  = "Quick Focus"
 local PAGE_COMBAT_TEXT  = "Combat Text"
 local PAGE_CASTBAR      = "Target Castbar"
@@ -361,19 +362,6 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "CLASS RESOURCES", y); y = y - h
-
-        _, h = W:DualRow(parent, y,
-            { type="toggle", text="Spec-Based Rune Color",
-              tooltip="Death Knight only. Colors runes by your current spec (Blood/Frost/Unholy) instead of the single Runes color from EllesmereUI's Class Resource Colors. Only takes effect while EllesmereUIResourceBars' Class Resource is set to the \"Class Resource Color\" fill mode.",
-              getValue=function() local c = QoL(); return c and c.runesSpecColored or false end,
-              setValue=function(v)
-                  local c = QoL(); if c then c.runesSpecColored = v end
-                  RefreshAll()
-              end },
-            { type="label", text="" })
-        y = y - h
-
         _, h = W:SectionHeader(parent, "STATUS BAR GENERAL", y); y = y - h
 
         local function SBOff() local c = SB(); return not (c and c.enabled) end
@@ -569,6 +557,61 @@ initFrame:SetScript("OnEvent", function(self)
                   RefreshAll()
               end },
             { type="label", text="" })
+        y = y - h
+
+        return math.abs(y)
+    end
+
+    ---------------------------------------------------------------------------
+    --  Tweaks page -- small hooks into other EllesmereUI modules
+    ---------------------------------------------------------------------------
+    local function BuildTweaksPage(pageName, parent, yOffset)
+        local W = EllesmereUI.Widgets
+        local y = yOffset
+        local h
+
+        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        parent._showRowDivider = true
+
+        _, h = W:SectionHeader(parent, "CLASS RESOURCES", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Spec-Based Rune Color",
+              tooltip="Death Knight only. Colors runes by your current spec (Blood/Frost/Unholy) instead of the single Runes color from EllesmereUI's Class Resource Colors. Only takes effect while EllesmereUIResourceBars' Class Resource is set to the \"Class Resource Color\" fill mode.",
+              getValue=function() local c = QoL(); return c and c.runesSpecColored or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.runesSpecColored = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "DEBUFFS", y); y = y - h
+
+        local function NotDispellableColorOff() local c = QoL(); return not (c and c.debuffNotDispellableColor) end
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Debuff Border Color When Not Dispellable",
+              tooltip="Player & Target frames. EllesmereUIUnitFrames' Dispel-Type Debuff Border colors a debuff's border by dispel type, but leaves it black when the debuff isn't dispellable. This recolors that black border to a custom color instead.",
+              getValue=function() local c = QoL(); return c and c.debuffNotDispellableColor or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.debuffNotDispellableColor = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="colorpicker", text="Border Color",
+              disabled=function() return NotDispellableColorOff() end,
+              getValue=function()
+                  local c = QoL()
+                  return (c and c.debuffNotDispellableColorR or 0.5),
+                         (c and c.debuffNotDispellableColorG or 0.5),
+                         (c and c.debuffNotDispellableColorB or 0.5)
+              end,
+              setValue=function(r, g, b)
+                  local c = QoL()
+                  if c then c.debuffNotDispellableColorR = r; c.debuffNotDispellableColorG = g; c.debuffNotDispellableColorB = b end
+                  RefreshAll()
+              end })
         y = y - h
 
         return math.abs(y)
@@ -993,18 +1036,21 @@ initFrame:SetScript("OnEvent", function(self)
               setValue=function(v)
                   local c = Castbar(); if c then c.enabled = v end
                   RefreshAll()
+                  RefreshWidgets()
               end },
             { type="label", text="" })
         y = y - h
 
         _, h = W:SectionHeader(parent, "ICON", y); y = y - h
 
-        local function IconNotDetached() local c = Castbar(); return not (c and c.detachIcon) end
-        local function IconTextOff() local c = Castbar(); return not (c and c.showUninterruptibleText) end
+        local function CastbarOff() local c = Castbar(); return not c or c.enabled == false end
+        local function IconNotDetached() local c = Castbar(); return CastbarOff() or not (c and c.detachIcon) end
+        local function IconTextOff() local c = Castbar(); return CastbarOff() or not (c and c.showUninterruptibleText) end
 
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Detach Icon",
               tooltip="Moves the cast icon off the castbar so it can be positioned independently.",
+              disabled=CastbarOff,
               getValue=function() local c = Castbar(); return c and c.detachIcon or false end,
               setValue=function(v)
                   local c = Castbar(); if c then c.detachIcon = v end
@@ -1013,6 +1059,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="slider", text="Icon Size",
               min = 16, max = 64, step = 1,
+              disabled=CastbarOff,
               getValue=function() local c = Castbar(); return c and c.iconSize or 32 end,
               setValue=function(v)
                   local c = Castbar(); if c then c.iconSize = v end
@@ -1023,6 +1070,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="slider", text="Icon Border Width",
               min = 0, max = 8, step = 1,
+              disabled=CastbarOff,
               getValue=function() local c = Castbar(); return c and c.iconBorderWidth or 1 end,
               setValue=function(v)
                   local c = Castbar(); if c then c.iconBorderWidth = v end
@@ -1067,6 +1115,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Desaturate on Uninterruptible",
               tooltip="Desaturates the cast icon when the cast cannot be interrupted.",
+              disabled=CastbarOff,
               getValue=function() local c = Castbar(); return c and c.desaturateUninterruptible ~= false end,
               setValue=function(v)
                   local c = Castbar(); if c then c.desaturateUninterruptible = v end
@@ -1074,6 +1123,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="toggle", text="Text Over Icon on Uninterruptible",
               tooltip="Overlays text on the cast icon when the cast cannot be interrupted.",
+              disabled=CastbarOff,
               getValue=function() local c = Castbar(); return c and c.showUninterruptibleText ~= false end,
               setValue=function(v)
                   local c = Castbar(); if c then c.showUninterruptibleText = v end
@@ -1129,6 +1179,7 @@ initFrame:SetScript("OnEvent", function(self)
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Overlay on Target Frame",
               tooltip="Makes the castbar itself transparent and overlays it on the target frame, leaving only text and spark visible.",
+              disabled=CastbarOff,
               getValue=function() local c = Castbar(); return c and c.overlayMode or false end,
               setValue=function(v)
                   local c = Castbar(); if c then c.overlayMode = v end
@@ -1375,9 +1426,10 @@ initFrame:SetScript("OnEvent", function(self)
         RegisterModuleExternal({
             title       = "Voidlol",
             description = description,
-            pages       = { PAGE_QOL, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
+            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
             buildPage   = function(pageName, parent, yOffset)
                 if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
+                if pageName == PAGE_TWEAKS       then return BuildTweaksPage(pageName, parent, yOffset) end
                 if pageName == PAGE_QUICK_FOCUS  then return BuildQuickFocusPage(pageName, parent, yOffset) end
                 if pageName == PAGE_COMBAT_TEXT  then return BuildCombatTextPage(pageName, parent, yOffset) end
                 if pageName == PAGE_CASTBAR      then return BuildCastbarPage(pageName, parent, yOffset) end

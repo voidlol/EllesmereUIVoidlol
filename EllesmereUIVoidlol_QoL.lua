@@ -237,8 +237,77 @@ local function ApplyRunesSpecColor()
     end
 end
 
+-------------------------------------------------------------------------------
+--  Debuff Border Color When Not Dispellable (Player & Target)
+--  EllesmereUIUnitFrames' own dispel-type debuff border feature colors a
+--  debuff icon's border by dispel type through each frame's
+--  Debuffs.PostUpdateButton (a standard oUF Auras element hook) -- but for a
+--  debuff that isn't dispellable (data.dispelName == nil) it restores a flat
+--  black border. That coloring function is private to EllesmereUIUnitFrames'
+--  own file-local namespace, so it can't be reached directly; instead this
+--  wraps PostUpdateButton itself on the Player/Target Debuffs containers --
+--  ordinary properties of frames we can reach by their known global names
+--  (EllesmereUIUnitFrames_Player / _Target) -- calling the original first and
+--  then recoloring the border to a custom color whenever it just went black
+--  for that same "not dispellable" reason. Always safe to leave installed:
+--  the recolor step itself no-ops unless the toggle below is on.
+-------------------------------------------------------------------------------
+local wrappedDebuffContainers = setmetatable({}, { __mode = "k" })
+
+local function ApplyNotDispellableBorderColor(button, data)
+    if not (data and data.dispelName == nil) then return end
+    local border = button and button.Border
+    if not border then return end
+    local cfg = DB()
+    if not (cfg and cfg.debuffNotDispellableColor) then return end
+    local EUI = _G.EllesmereUI
+    if not (EUI and EUI.PP and EUI.PP.SetBorderColor) then return end
+    EUI.PP.SetBorderColor(border,
+        cfg.debuffNotDispellableColorR or 0.5,
+        cfg.debuffNotDispellableColorG or 0.5,
+        cfg.debuffNotDispellableColorB or 0.5, 1)
+end
+
+local function HookDebuffContainer(debuffs)
+    if not debuffs or wrappedDebuffContainers[debuffs] then return end
+    wrappedDebuffContainers[debuffs] = true
+    local orig = debuffs.PostUpdateButton
+    debuffs.PostUpdateButton = function(element, button, unit, data)
+        if orig then orig(element, button, unit, data) end
+        ApplyNotDispellableBorderColor(button, data)
+    end
+end
+
+local function HookDebuffContainers()
+    local p = _G.EllesmereUIUnitFrames_Player
+    local t = _G.EllesmereUIUnitFrames_Target
+    if p then HookDebuffContainer(p.Debuffs) end
+    if t then HookDebuffContainer(t.Debuffs) end
+end
+
+-- Defensive re-hook: if EllesmereUIUnitFrames ever rebuilds a Debuffs
+-- container from scratch (settings change, profile swap), catch it via its
+-- exposed global reload hook rather than assuming the frame object is
+-- permanent for the whole session.
+local reloadHooked = false
+local function EnsureReloadFramesHook()
+    if reloadHooked or not _G._EUF_ReloadFrames then return end
+    reloadHooked = true
+    local orig = _G._EUF_ReloadFrames
+    _G._EUF_ReloadFrames = function(...)
+        orig(...)
+        HookDebuffContainers()
+    end
+end
+
+local function ApplyDebuffNotDispellableColor()
+    HookDebuffContainers()
+    EnsureReloadFramesHook()
+end
+
 function EVL.ApplyQoL()
     ApplyDragonridingOverride()
     ApplyPlayedSuppression()
     ApplyRunesSpecColor()
+    ApplyDebuffNotDispellableColor()
 end
