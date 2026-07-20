@@ -870,8 +870,8 @@ local function EnsureAnchor()
     return anchor
 end
 
-local function CreateBar()
-    local bar = CreateFrame("StatusBar", nil, anchor)
+local function CreateBar(parent)
+    local bar = CreateFrame("StatusBar", nil, parent or anchor)
     bar:SetMinMaxValues(0, 1)
     bar:SetStatusBarTexture(GetBarTexturePath())
 
@@ -938,9 +938,60 @@ local function ApplyPosition()
     end
 end
 
--- Styles every bar in the pool (size/font/colors) -- independent of how
--- many are actually shown right now, that's UpdateAnchorSize's job (called
--- from RefreshBars every redraw, since the shown count changes live).
+-- Applies every settings-driven visual to ONE bar (size/font/colors/border/
+-- icon position) -- everything except the bar's own position relative to
+-- its neighbors, which differs between the live stack (ApplyLayout) and the
+-- options-page preview (EVL.InterruptTracker_RefreshPreviewGroup), both of
+-- which call this so a settings change looks identical in both places.
+local function StyleBar(bar, cfg, iconSize, barWidth, fontPath, thickness, PP)
+    bar:SetSize(barWidth, cfg.barHeight or 24)
+    bar:SetStatusBarTexture(GetBarTexturePath())
+    if bar.SetReverseFill then bar:SetReverseFill(cfg.reverseFill == true) end
+    -- Alpha is baked in at 1 here -- RenderBarEntry scales the actual
+    -- displayed opacity per-frame via bar.bg:SetAlpha(), since the "ready"
+    -- state additionally fades the background along with the Ready Color's
+    -- own alpha.
+    bar.bg:SetColorTexture(cfg.barBgColorR or 0.08, cfg.barBgColorG or 0.08, cfg.barBgColorB or 0.08, 1)
+    bar.resultIcon:SetSize(math.max(8, (cfg.barHeight or 24) - 8), math.max(8, (cfg.barHeight or 24) - 8))
+
+    if PP and PP.ShowBorder and PP.HideBorder then
+        if thickness <= 0 then
+            PP.HideBorder(bar)
+            PP.HideBorder(bar.icon)
+        else
+            PP.ShowBorder(bar)
+            PP.ShowBorder(bar.icon)
+            if PP.SetBorderSize then
+                PP.SetBorderSize(bar, thickness)
+                PP.SetBorderSize(bar.icon, thickness)
+            end
+        end
+    end
+
+    bar.icon:ClearAllPoints()
+    bar.icon:SetSize(iconSize, iconSize)
+    if cfg.iconPosition == "right" then
+        bar.icon:SetPoint("LEFT", bar, "RIGHT", cfg.iconGap or 4, 0)
+    else
+        bar.icon:SetPoint("RIGHT", bar, "LEFT", -(cfg.iconGap or 4), 0)
+    end
+
+    bar.nameText:SetFont(fontPath, cfg.fontSize or 12, "")
+    bar.timeText:SetFont(fontPath, cfg.fontSize or 12, "")
+    bar.nameText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
+    bar.timeText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
+
+    bar.timeText:ClearAllPoints()
+    bar.timeText:SetPoint("RIGHT", bar, "RIGHT", -6, 0)
+    bar.nameText:ClearAllPoints()
+    bar.nameText:SetPoint("LEFT", bar, "LEFT", 6, 0)
+    bar.nameText:SetPoint("RIGHT", bar.timeText, "LEFT", -6, 0)
+end
+
+-- Styles every bar in the pool and positions it in the live stack --
+-- independent of how many are actually shown right now, that's
+-- UpdateAnchorSize's job (called from RefreshBars every redraw, since the
+-- shown count changes live).
 local function ApplyLayout()
     local cfg = DB()
     if not cfg or not anchor then return end
@@ -955,29 +1006,7 @@ local function ApplyLayout()
     for i = 1, #bars do
         local bar = bars[i]
         bar:ClearAllPoints()
-        bar:SetSize(barWidth, cfg.barHeight or 24)
-        bar:SetStatusBarTexture(GetBarTexturePath())
-        if bar.SetReverseFill then bar:SetReverseFill(cfg.reverseFill == true) end
-        -- Alpha is baked in at 1 here -- RefreshBars scales the actual
-        -- displayed opacity per-frame via bar.bg:SetAlpha(), since the
-        -- "ready" state additionally fades the background along with the
-        -- Ready Color's own alpha (see RefreshBars).
-        bar.bg:SetColorTexture(cfg.barBgColorR or 0.08, cfg.barBgColorG or 0.08, cfg.barBgColorB or 0.08, 1)
-        bar.resultIcon:SetSize(math.max(8, (cfg.barHeight or 24) - 8), math.max(8, (cfg.barHeight or 24) - 8))
-
-        if PP and PP.ShowBorder and PP.HideBorder then
-            if thickness <= 0 then
-                PP.HideBorder(bar)
-                PP.HideBorder(bar.icon)
-            else
-                PP.ShowBorder(bar)
-                PP.ShowBorder(bar.icon)
-                if PP.SetBorderSize then
-                    PP.SetBorderSize(bar, thickness)
-                    PP.SetBorderSize(bar.icon, thickness)
-                end
-            end
-        end
+        StyleBar(bar, cfg, iconSize, barWidth, fontPath, thickness, PP)
 
         if i == 1 then
             if cfg.iconPosition == "right" then
@@ -988,25 +1017,6 @@ local function ApplyLayout()
         else
             bar:SetPoint("TOPLEFT", bars[i - 1], "BOTTOMLEFT", 0, -(cfg.barSpacing or 6))
         end
-
-        bar.icon:ClearAllPoints()
-        bar.icon:SetSize(iconSize, iconSize)
-        if cfg.iconPosition == "right" then
-            bar.icon:SetPoint("LEFT", bar, "RIGHT", cfg.iconGap or 4, 0)
-        else
-            bar.icon:SetPoint("RIGHT", bar, "LEFT", -(cfg.iconGap or 4), 0)
-        end
-
-        bar.nameText:SetFont(fontPath, cfg.fontSize or 12, "")
-        bar.timeText:SetFont(fontPath, cfg.fontSize or 12, "")
-        bar.nameText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
-        bar.timeText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
-
-        bar.timeText:ClearAllPoints()
-        bar.timeText:SetPoint("RIGHT", bar, "RIGHT", -6, 0)
-        bar.nameText:ClearAllPoints()
-        bar.nameText:SetPoint("LEFT", bar, "LEFT", 6, 0)
-        bar.nameText:SetPoint("RIGHT", bar.timeText, "LEFT", -6, 0)
     end
 end
 
@@ -1116,6 +1126,96 @@ local function BuildDisplayList()
     return list
 end
 
+-- Renders ONE list entry onto ONE bar (value/icon/text/state colors/hit-miss
+-- badge). Shared by RefreshBars (real data) and
+-- EVL.InterruptTracker_RefreshPreviewGroup (fake data on the options page),
+-- so a settings change looks identical in both.
+local function RenderBarEntry(bar, entry, cfg, now)
+    local remain = math.max(0, entry.endTime - now)
+    local isReady = remain <= 0
+    local value = (entry.noAddon or isReady) and 1 or (remain / math.max(entry.duration, 1))
+    local cr, cg, cb = GetClassColor(entry.classTag)
+
+    bar:SetValue(value)
+
+    if bar._lastSpellID ~= entry.spellID or bar._lastNoAddon ~= entry.noAddon then
+        if entry.noAddon then
+            bar.icon.tex:SetTexture("Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES")
+            bar.icon.tex:SetTexCoord(GetClassCoords(entry.classTag))
+        else
+            bar.icon.tex:SetTexture(SafeGetSpellTexture(entry.spellID) or "Interface\\Icons\\INV_Misc_QuestionMark")
+            bar.icon.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        end
+        bar._lastSpellID = entry.spellID
+        bar._lastNoAddon = entry.noAddon
+    end
+
+    if bar._lastName ~= entry.name then
+        bar.nameText:SetText(entry.name)
+        bar._lastName = entry.name
+    end
+
+    local bgOpacity = cfg.barBgColorA or 0.95
+
+    if entry.noAddon then
+        bar:SetStatusBarColor(cfg.noAddonColorR or 0.2, cfg.noAddonColorG or 0.2, cfg.noAddonColorB or 0.2, (cfg.noAddonOpacity or 80) / 100)
+        bar.bg:SetAlpha(bgOpacity)
+        bar.timeText:SetText("No data")
+        bar.timeText:SetTextColor(cfg.noAddonTextColorR or 0.6, cfg.noAddonTextColorG or 0.6, cfg.noAddonTextColorB or 0.6, 1)
+        bar.nameText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
+        bar.resultIcon:Hide()
+    elseif isReady then
+        -- The background sits behind the fill, so a translucent Ready
+        -- Color alone would still show an opaque backdrop through it.
+        -- Scaling the background by the same alpha lets Ready Color's
+        -- alpha fade the WHOLE bar, not just the fill -- while the
+        -- on-cooldown/no-data background opacity below is untouched,
+        -- so the "remaining track" stays visible during a countdown.
+        local readyAlpha = cfg.readyColorA or 1
+        if cfg.keepReadyClassColor then
+            bar:SetStatusBarColor(cr * 0.9, cg * 0.9, cb * 0.9, readyAlpha)
+        else
+            bar:SetStatusBarColor(cfg.readyColorR or 0, cfg.readyColorG or 0.78, cfg.readyColorB or 0.2, readyAlpha)
+        end
+        bar.bg:SetAlpha(bgOpacity * readyAlpha)
+        bar.timeText:SetText("Ready")
+        bar.timeText:SetTextColor(cfg.readyTextColorR or 0.2, cfg.readyTextColorG or 1, cfg.readyTextColorB or 0.2, 1)
+        if cfg.nameColorReadyMode == "class" then
+            bar.nameText:SetTextColor(cr, cg, cb, 1)
+        else
+            bar.nameText:SetTextColor(cfg.nameColorReadyR or 1, cfg.nameColorReadyG or 1, cfg.nameColorReadyB or 1, 1)
+        end
+        bar.resultIcon:Hide()
+    else
+        local mul = cfg.onCooldownColorMul or 0.7
+        bar:SetStatusBarColor(cr * mul, cg * mul, cb * mul, cfg.onCooldownAlpha or 0.9)
+        bar.bg:SetAlpha(bgOpacity)
+        if cfg.nameColorCooldownMode == "class" then
+            bar.nameText:SetTextColor(cr, cg, cb, 1)
+        else
+            bar.nameText:SetTextColor(cfg.nameColorCooldownR or 1, cfg.nameColorCooldownG or 1, cfg.nameColorCooldownB or 1, 1)
+        end
+        bar.timeText:SetText(remain >= 60
+            and string.format("%dm%02d", math.floor(remain / 60), math.floor(remain % 60))
+            or string.format("%.1f", remain))
+        bar.timeText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
+
+        -- Result of the cast that put this on cooldown: green check once
+        -- UNIT_SPELLCAST_INTERRUPTED confirms it landed, red X if
+        -- MISS_CONFIRM_DELAY passed with no confirmation. Nothing shown
+        -- while still "pending" (just cast, not resolved yet).
+        if entry.kickResult == "hit" then
+            bar.resultIcon:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+            bar.resultIcon:Show()
+        elseif entry.kickResult == "miss" then
+            bar.resultIcon:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
+            bar.resultIcon:Show()
+        else
+            bar.resultIcon:Hide()
+        end
+    end
+end
+
 local function RefreshBars()
     local cfg = DB()
     if not cfg or not cfg.enabled or not anchor then return end
@@ -1148,101 +1248,21 @@ local function RefreshBars()
         local entry = (i <= maxBars) and list[i] or nil
 
         if entry then
-            local remain = math.max(0, entry.endTime - now)
-            local isReady = remain <= 0
-            local value = (entry.noAddon or isReady) and 1 or (remain / math.max(entry.duration, 1))
-            local cr, cg, cb = GetClassColor(entry.classTag)
-
-            bar:SetValue(value)
-
-            if bar._lastSpellID ~= entry.spellID or bar._lastNoAddon ~= entry.noAddon then
-                if entry.noAddon then
-                    bar.icon.tex:SetTexture("Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES")
-                    bar.icon.tex:SetTexCoord(GetClassCoords(entry.classTag))
-                else
-                    bar.icon.tex:SetTexture(SafeGetSpellTexture(entry.spellID) or "Interface\\Icons\\INV_Misc_QuestionMark")
-                    bar.icon.tex:SetTexCoord(0.08, 0.92, 0.08, 0.92)
-                end
-                bar._lastSpellID = entry.spellID
-                bar._lastNoAddon = entry.noAddon
-            end
-
-            if bar._lastName ~= entry.name then
-                bar.nameText:SetText(entry.name)
-                bar._lastName = entry.name
-            end
-
-            local bgOpacity = cfg.barBgColorA or 0.95
-
-            if entry.noAddon then
-                bar:SetStatusBarColor(cfg.noAddonColorR or 0.2, cfg.noAddonColorG or 0.2, cfg.noAddonColorB or 0.2, (cfg.noAddonOpacity or 80) / 100)
-                bar.bg:SetAlpha(bgOpacity)
-                bar.timeText:SetText("No data")
-                bar.timeText:SetTextColor(cfg.noAddonTextColorR or 0.6, cfg.noAddonTextColorG or 0.6, cfg.noAddonTextColorB or 0.6, 1)
-                bar.nameText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
-                bar.resultIcon:Hide()
-            elseif isReady then
-                -- The background sits behind the fill, so a translucent Ready
-                -- Color alone would still show an opaque backdrop through it.
-                -- Scaling the background by the same alpha lets Ready Color's
-                -- alpha fade the WHOLE bar, not just the fill -- while the
-                -- on-cooldown/no-data background opacity below is untouched,
-                -- so the "remaining track" stays visible during a countdown.
-                local readyAlpha = cfg.readyColorA or 1
-                if cfg.keepReadyClassColor then
-                    bar:SetStatusBarColor(cr * 0.9, cg * 0.9, cb * 0.9, readyAlpha)
-                else
-                    bar:SetStatusBarColor(cfg.readyColorR or 0, cfg.readyColorG or 0.78, cfg.readyColorB or 0.2, readyAlpha)
-                end
-                bar.bg:SetAlpha(bgOpacity * readyAlpha)
-                bar.timeText:SetText("Ready")
-                bar.timeText:SetTextColor(cfg.readyTextColorR or 0.2, cfg.readyTextColorG or 1, cfg.readyTextColorB or 0.2, 1)
-                if cfg.nameColorReadyMode == "class" then
-                    bar.nameText:SetTextColor(cr, cg, cb, 1)
-                else
-                    bar.nameText:SetTextColor(cfg.nameColorReadyR or 1, cfg.nameColorReadyG or 1, cfg.nameColorReadyB or 1, 1)
-                end
-                bar.resultIcon:Hide()
-            else
-                local mul = cfg.onCooldownColorMul or 0.7
-                bar:SetStatusBarColor(cr * mul, cg * mul, cb * mul, cfg.onCooldownAlpha or 0.9)
-                bar.bg:SetAlpha(bgOpacity)
-                if cfg.nameColorCooldownMode == "class" then
-                    bar.nameText:SetTextColor(cr, cg, cb, 1)
-                else
-                    bar.nameText:SetTextColor(cfg.nameColorCooldownR or 1, cfg.nameColorCooldownG or 1, cfg.nameColorCooldownB or 1, 1)
-                end
-                bar.timeText:SetText(remain >= 60
-                    and string.format("%dm%02d", math.floor(remain / 60), math.floor(remain % 60))
-                    or string.format("%.1f", remain))
-                bar.timeText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
-
-                -- Result of the cast that put this on cooldown: green check
-                -- once UNIT_SPELLCAST_INTERRUPTED confirms it landed, red X
-                -- if MISS_CONFIRM_DELAY passed with no confirmation. Nothing
-                -- shown while still "pending" (just cast, not resolved yet).
-                if entry.kickResult == "hit" then
-                    bar.resultIcon:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
-                    bar.resultIcon:Show()
-                elseif entry.kickResult == "miss" then
-                    bar.resultIcon:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
-                    bar.resultIcon:Show()
-                else
-                    bar.resultIcon:Hide()
-                end
-            end
-
+            RenderBarEntry(bar, entry, cfg, now)
             bar:Show()
         else
             bar:Hide()
         end
     end
 
-    -- TOPLEFT-anchored: resizing shifts the bottom/right edges only, so
-    -- re-applying position after a size change keeps the dragged corner
-    -- pinned in place.
+    -- NOT calling ApplyPosition() here: once a position is saved (cfg.pos),
+    -- SetPoint("TOPLEFT", UIParent, "CENTER", cfg.pos.left, cfg.pos.top) is
+    -- entirely size-independent -- re-applying it on every redraw did
+    -- nothing useful, but DID fight Unlock Mode's live drag, snapping the
+    -- frame back to its last-saved position every ~50ms while the mouse was
+    -- still held down. Position is (re)applied from ApplyAll (on enable/
+    -- settings change) and from Unlock Mode's own applyPos callback.
     UpdateAnchorSize(shownCount)
-    ApplyPosition()
 end
 
 -------------------------------------------------------------------------------
@@ -1607,6 +1627,107 @@ local function ApplyAll()
     RefreshBars()
 end
 EVL.ApplyInterruptTracker = ApplyAll
+
+-------------------------------------------------------------------------------
+--  Options-page preview -- two standalone sample bars (one ready, one on
+--  cooldown with a randomized hit/miss badge), independent of Enabled/group
+--  status, styled via the exact same StyleBar/RenderBarEntry every live bar
+--  uses, so a settings change is visible immediately without grouping up.
+--  EUI_Voidlol_Options.lua calls EnsurePreviewGroup once (to get the host
+--  frame) and RefreshPreviewGroup on every settings change / page open.
+-------------------------------------------------------------------------------
+local PREVIEW_COUNT = 2
+local previewGroup -- { frame, bars = {} }
+local PREVIEW_NAMES = {
+    "Thrall", "Jaina", "Sylvanas", "Varian", "Illidan", "Tyrande",
+    "Uther", "Malfurion", "Arthas", "Vol'jin", "Baine", "Genn",
+}
+-- Every trackable class token (built once from CLASS_INTERRUPTS, which
+-- covers all 13 classes) so the preview isn't tied to two hardcoded classes.
+local PREVIEW_CLASS_TOKENS = {}
+for cls in pairs(CLASS_INTERRUPTS) do
+    PREVIEW_CLASS_TOKENS[#PREVIEW_CLASS_TOKENS + 1] = cls
+end
+
+-- Picks `count` distinct random entries from `pool` (so the two preview
+-- bars don't show the exact same class/name as each other). Gives up on
+-- staying distinct after a few tries -- harmless if `pool` is ever smaller
+-- than `count`.
+local function PickDistinct(pool, count)
+    local picked, used = {}, {}
+    for _ = 1, count do
+        local idx, tries = math.random(1, #pool), 0
+        while used[idx] and tries < 20 do
+            idx = math.random(1, #pool)
+            tries = tries + 1
+        end
+        used[idx] = true
+        picked[#picked + 1] = pool[idx]
+    end
+    return picked
+end
+
+function EVL.InterruptTracker_EnsurePreviewGroup(parent)
+    if not previewGroup then
+        previewGroup = { frame = CreateFrame("Frame", nil, parent), bars = {} }
+    else
+        previewGroup.frame:SetParent(parent)
+    end
+    for i = 1, PREVIEW_COUNT do
+        if not previewGroup.bars[i] then
+            previewGroup.bars[i] = CreateBar(previewGroup.frame)
+        end
+    end
+    return previewGroup.frame
+end
+
+function EVL.InterruptTracker_RefreshPreviewGroup()
+    if not previewGroup then return 0, 0 end
+    local cfg = DB()
+    if not cfg then return 0, 0 end
+
+    local iconSize = cfg.barHeight or 24
+    local barWidth = cfg.barWidth or 200
+    local fontPath = GetFontPath(cfg.fontFace)
+    local PP = EllesmereUI and EllesmereUI.PP
+    local thickness = cfg.borderThickness
+    if thickness == nil then thickness = 1 end
+
+    for i = 1, PREVIEW_COUNT do
+        local bar = previewGroup.bars[i]
+        bar:ClearAllPoints()
+        StyleBar(bar, cfg, iconSize, barWidth, fontPath, thickness, PP)
+        if i == 1 then
+            bar:SetPoint("TOPLEFT", previewGroup.frame, "TOPLEFT",
+                (cfg.iconPosition == "right") and 0 or (iconSize + (cfg.iconGap or 4)), 0)
+        else
+            bar:SetPoint("TOPLEFT", previewGroup.bars[i - 1], "BOTTOMLEFT", 0, -(cfg.barSpacing or 6))
+        end
+        bar:Show()
+    end
+
+    local now = GetTime()
+    local classes = PickDistinct(PREVIEW_CLASS_TOKENS, 2)
+    local names = PickDistinct(PREVIEW_NAMES, 2)
+    local readyKick = CLASS_INTERRUPTS[classes[1]]
+    local cdKick = CLASS_INTERRUPTS[classes[2]]
+
+    RenderBarEntry(previewGroup.bars[1], {
+        name = names[1], classTag = classes[1], spellID = readyKick.id,
+        duration = readyKick.cd, endTime = now, noAddon = false,
+    }, cfg, now)
+
+    RenderBarEntry(previewGroup.bars[2], {
+        name = names[2], classTag = classes[2], spellID = cdKick.id,
+        duration = cdKick.cd, endTime = now + cdKick.cd * 0.7, noAddon = false,
+        kickResult = (math.random() < 0.5) and "hit" or "miss",
+    }, cfg, now)
+
+    local totalW = barWidth + iconSize + (cfg.iconGap or 4)
+    local totalH = (cfg.barHeight or 24) * PREVIEW_COUNT + (cfg.barSpacing or 6) * (PREVIEW_COUNT - 1)
+    previewGroup.frame:SetSize(math.max(1, totalW), math.max(1, totalH))
+    return totalW, totalH
+end
 
 -------------------------------------------------------------------------------
 --  Bootstrap

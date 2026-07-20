@@ -71,6 +71,16 @@ initFrame:SetScript("OnEvent", function(self)
     local healerManaPreviewHdr
     local healerManaPartyCaption, healerManaRaidCaption
     local healerManaHeaderBuilder
+    local interruptTrackerPreviewHdr
+    local interruptTrackerHeaderBuilder
+    -- Which page's header-preview currently owns the shared content-header
+    -- frame. HealerMana/InterruptTracker/Castbar all reparent their sample
+    -- bars into that one recycled `hdr` object via their own cached
+    -- ...PreviewHdr locals, which never get cleared on page switch -- without
+    -- this guard, RefreshAll() (fired on every settings change, regardless
+    -- of which page is open) happily re-shows a DIFFERENT page's stale
+    -- preview into the currently visible header.
+    local activePreviewPage
 
     local RefreshWidgets
     local ANCHOR_MAP = {
@@ -268,6 +278,7 @@ initFrame:SetScript("OnEvent", function(self)
     local HEALER_MANA_RAID_COUNT  = 4
 
     local function RefreshHealerManaPreview()
+        if activePreviewPage ~= PAGE_HEALER_MANA then return end
         if not healerManaPreviewHdr then return end
         if not (EVL.HealerMana_EnsurePreviewGroup and EVL.HealerMana_RefreshPreviewGroup) then return end
         local hdr = healerManaPreviewHdr
@@ -319,13 +330,37 @@ initFrame:SetScript("OnEvent", function(self)
     healerManaPreviewHealFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     healerManaPreviewHealFrame:SetScript("OnEvent", RefreshHealerManaPreview)
 
+    -- Two standalone sample bars (one ready, one on cooldown with a
+    -- randomized hit/miss badge), independent of Enabled/group status, so
+    -- the options page always shows a live preview of the current settings.
+    local function RefreshInterruptTrackerPreview()
+        if activePreviewPage ~= PAGE_INTERRUPT_TRACKER then return end
+        if not interruptTrackerPreviewHdr then return end
+        if not (EVL.InterruptTracker_EnsurePreviewGroup and EVL.InterruptTracker_RefreshPreviewGroup) then return end
+        local hdr = interruptTrackerPreviewHdr
+
+        local frame = EVL.InterruptTracker_EnsurePreviewGroup(hdr)
+        local _, h = EVL.InterruptTracker_RefreshPreviewGroup()
+
+        frame:ClearAllPoints()
+        frame:SetPoint("TOP", hdr, "TOP", 0, -8)
+        frame:Show()
+
+        return h + 16
+    end
+
+    local interruptTrackerPreviewHealFrame = CreateFrame("Frame")
+    interruptTrackerPreviewHealFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    interruptTrackerPreviewHealFrame:SetScript("OnEvent", RefreshInterruptTrackerPreview)
+
     local function RefreshAll()
         if EVL.ApplyAll then EVL.ApplyAll() end
-        if castbarPreview and castbarPreview.Update then
+        if activePreviewPage == PAGE_CASTBAR and castbarPreview and castbarPreview.Update then
             castbarPreview:Update()
             ApplyCastbarPreviewStyle(castbarPreview)
         end
         RefreshHealerManaPreview()
+        RefreshInterruptTrackerPreview()
         if RefreshWidgets then RefreshWidgets() end
     end
 
@@ -1002,6 +1037,7 @@ initFrame:SetScript("OnEvent", function(self)
     --  Target Castbar page
     ---------------------------------------------------------------------------
     local function BuildCastbarHeaderPreview(hdr, hdrW)
+        activePreviewPage = PAGE_CASTBAR
         local modules = EllesmereUI and EllesmereUI._modules
         local ufConfig = modules and modules.EllesmereUIUnitFrames
         local ufBuilder = ufConfig and ufConfig.getHeaderBuilder and ufConfig.getHeaderBuilder("Main Frames")
@@ -1243,6 +1279,7 @@ initFrame:SetScript("OnEvent", function(self)
     -- just papering over it.
     local function BuildHealerManaHeaderPreview(hdr, hdrW)
         healerManaPreviewHdr = hdr
+        activePreviewPage = PAGE_HEALER_MANA
         return RefreshHealerManaPreview() or 88
     end
 
@@ -1392,12 +1429,23 @@ initFrame:SetScript("OnEvent", function(self)
     ---------------------------------------------------------------------------
     --  Interrupt Tracker page
     ---------------------------------------------------------------------------
+    local function BuildInterruptTrackerHeaderPreview(hdr, hdrW)
+        interruptTrackerPreviewHdr = hdr
+        activePreviewPage = PAGE_INTERRUPT_TRACKER
+        return RefreshInterruptTrackerPreview() or 60
+    end
+
     local function BuildInterruptTrackerPage(pageName, parent, yOffset)
         local W = EllesmereUI.Widgets
         local y = yOffset
         local h
 
-        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        interruptTrackerHeaderBuilder = BuildInterruptTrackerHeaderPreview
+        if EllesmereUI.SetContentHeader then
+            EllesmereUI:SetContentHeader(interruptTrackerHeaderBuilder)
+        elseif EllesmereUI.ClearContentHeader then
+            EllesmereUI:ClearContentHeader()
+        end
         parent._showRowDivider = true
 
         local function ITOff() return not (IT() and IT().enabled) end
@@ -1895,8 +1943,12 @@ initFrame:SetScript("OnEvent", function(self)
                 if pageName == PAGE_HEALER_MANA then
                     return healerManaHeaderBuilder
                 end
+                if pageName == PAGE_INTERRUPT_TRACKER then
+                    return interruptTrackerHeaderBuilder
+                end
             end,
             onPageCacheRestore = function(pageName)
+                activePreviewPage = pageName
                 if pageName == PAGE_CASTBAR and castbarPreview and castbarPreview.Update then
                     castbarPreview:Update()
                     C_Timer.After(0, function()
@@ -1908,6 +1960,9 @@ initFrame:SetScript("OnEvent", function(self)
                 end
                 if pageName == PAGE_HEALER_MANA then
                     RefreshHealerManaPreview()
+                end
+                if pageName == PAGE_INTERRUPT_TRACKER then
+                    RefreshInterruptTrackerPreview()
                 end
             end,
             onReset = function()
