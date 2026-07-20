@@ -10,6 +10,7 @@
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 
 # Main Lua
+EUI_Voidlol_SharedMedia.lua
 EllesmereUIVoidlol.lua
 EllesmereUIVoidlol_QoL.lua
 EllesmereUIVoidlol_StatusBar.lua

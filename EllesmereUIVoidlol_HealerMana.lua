@@ -312,17 +312,39 @@ EnsureContainer = function(key)
     return frame
 end
 
+-- Anchored by TOPLEFT (not CENTER): with a CENTER anchor, SetSize during
+-- RefreshContainer (row count changes) would expand the container equally in
+-- both directions around the fixed center point -- e.g. a VERTICAL frame
+-- growing from 2 to 3 rows would shift row 1 upward instead of just adding
+-- row 3 below, and HORIZONTAL likewise crept row 1 left. TOPLEFT keeps that
+-- corner pinned, so VERTICAL only ever extends downward and HORIZONTAL only
+-- ever extends rightward, matching the per-row math in LayoutRows below.
 ApplyPosition = function(key)
     local cfg = FrameDB(key)
     local container = containers[key]
     if not cfg or not container then return end
 
-    container:ClearAllPoints()
+    local fes = container:GetEffectiveScale() or 1
+    local ues = UIParent:GetEffectiveScale() or 1
+    local ratio = fes / ues
+    local w = (container:GetWidth() or 0) * ratio
+    local h = (container:GetHeight() or 0) * ratio
+
     local pos = cfg.pos
+    -- One-time migration from the old CENTER-anchored format: convert to an
+    -- equivalent top-left using the container's current size so existing
+    -- users' frames don't jump on update.
+    if pos and pos.centerX ~= nil and pos.left == nil then
+        pos = { left = pos.centerX - w / 2, top = pos.centerY + h / 2 }
+        cfg.pos = pos
+    end
+
+    container:ClearAllPoints()
     if pos then
-        container:SetPoint("CENTER", UIParent, "CENTER", pos.centerX, pos.centerY)
+        container:SetPoint("TOPLEFT", UIParent, "CENTER", pos.left, pos.top)
     else
-        container:SetPoint("CENTER", UIParent, "CENTER", key == "party" and -250 or 250, 0)
+        local defCenterX = key == "party" and -250 or 250
+        container:SetPoint("TOPLEFT", UIParent, "CENTER", defCenterX - w / 2, h / 2)
     end
 end
 
@@ -832,13 +854,13 @@ RegisterUnlock = function()
             savePos        = function()
                 local fcfg = FrameDB(def.key)
                 local f = containers[def.key]
-                if not fcfg or not f or not f:GetCenter() then return end
-                local cx, cy = f:GetCenter()
+                if not fcfg or not f or not f:GetLeft() or not f:GetTop() then return end
+                local left, top = f:GetLeft(), f:GetTop()
                 local upX, upY = UIParent:GetCenter()
                 local fes = f:GetEffectiveScale() or 1
                 local ues = UIParent:GetEffectiveScale() or 1
                 local ratio = fes / ues
-                fcfg.pos = { centerX = cx * ratio - upX, centerY = cy * ratio - upY }
+                fcfg.pos = { left = left * ratio - upX, top = top * ratio - upY }
             end,
             loadPos        = function()
                 local fcfg = FrameDB(def.key)

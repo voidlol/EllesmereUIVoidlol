@@ -500,7 +500,27 @@ local function ApplyParentIconDecoration()
     ApplyParentInterruptibleVisual()
 end
 
+-- Puts the parent icon back exactly as EllesmereUIUnitFrames built it (size,
+-- anchor, desaturation, our text overlay) -- used when this module is
+-- disabled, so a previously-applied layout doesn't linger.
+local function RestoreParentIcon()
+    local iconFrame = parentCastbar and parentCastbar._iconFrame
+    if iconFrame and pOrigIconPoint and pOrigIconPoint.point then
+        iconFrame:ClearAllPoints()
+        iconFrame:SetPoint(pOrigIconPoint.point, pOrigIconPoint.relTo, pOrigIconPoint.relPoint,
+            pOrigIconPoint.x, pOrigIconPoint.y)
+    end
+    if iconFrame and pOrigIconSize then
+        iconFrame:SetSize(pOrigIconSize.width, pOrigIconSize.height)
+    end
+    if pIconFS then pIconFS:Hide() end
+    if parentCastbar and parentCastbar.Icon then parentCastbar.Icon:SetDesaturated(false) end
+end
+
 -- Wrap (never replace) an existing Post* field so parent behaviour survives.
+-- `extra` only ever runs while this module is enabled AND overlay mode is
+-- off -- otherwise the wrapper is a transparent passthrough to `orig`, so a
+-- disabled module (or overlay mode) never touches the parent icon at all.
 local function EnsureWrappedField(obj, field, extra)
     obj._evlWrappers = obj._evlWrappers or {}
     local state = obj._evlWrappers[field]
@@ -508,7 +528,8 @@ local function EnsureWrappedField(obj, field, extra)
         state = {}
         state.fn = function(self, ...)
             if state.orig then state.orig(self, ...) end
-            if not (DB() and DB().overlayMode) then extra(self, ...) end
+            local cfg = DB()
+            if cfg and cfg.enabled and not cfg.overlayMode then extra(self, ...) end
         end
         obj._evlWrappers[field] = state
     end
@@ -543,6 +564,7 @@ local function ApplyAll()
     local cfg = DB()
     if not cfg or not cfg.enabled then
         DeactivateOverlay()
+        RestoreParentIcon()
         return
     end
 

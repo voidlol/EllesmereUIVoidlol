@@ -20,6 +20,11 @@ local defaults = {
                 suppressAutoPlayed = false,
                 runesSpecColored = false,
 
+                debuffNotDispellableColor = false,
+                debuffNotDispellableColorR = 0.5,
+                debuffNotDispellableColorG = 0.5,
+                debuffNotDispellableColorB = 0.5,
+
                 statusBar = {
                     enabled = false,
                     spacing = 12,
