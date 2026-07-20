@@ -12,8 +12,18 @@
 --     UNIT_POWER_FREQUENT (fires repeatedly during fast regen/decay -- NOT
 --     "UNIT_POWER_FREQUENT_UPDATE", which isn't a registerable event and
 --     errored on UnregisterEvent in an earlier version of this file), and
---     UNIT_CONNECTION, RegisterUnitEvent'd per currently-tracked healer unit
---     and re-synced whenever the healer list changes. No wall-clock timer.
+--     UNIT_CONNECTION are registered GLOBALLY (RegisterEvent, not
+--     RegisterUnitEvent) and filtered per-event by looking the incoming unit
+--     up in currentHealers (see RefreshHealerRow/FindHealerByUnit) -- mirrors
+--     how oUF's Power element tracks raid/party units (see
+--     EllesmereUIUnitFrames/Libs/oUF/elements/power.lua). An earlier version
+--     used RegisterUnitEvent per tracked healer unit, re-synced on every
+--     roster change; that made a healer's mana% permanently freeze
+--     mid-fight (survived a full relog) once enough per-unit event filters
+--     piled up on the shared runtime frame -- RegisterUnitEvent has an
+--     undocumented cap on how many distinct units it'll filter per
+--     frame/event, silently dropping delivery for units past it. No wall-
+--     clock timer.
 --   - Two preview surfaces: (1) Unlock Mode visibility doubles as a live,
 --     drag-to-position preview -- while Unlock Mode is open, both containers
 --     show sample healer rows, like CombatText's placeholder text. This one
@@ -104,7 +114,6 @@ local OnInspectReady
 local ClearInspectQueue
 local RefreshHealerIcon
 local RefreshContainer
-local SyncUnitEvents
 local FindHealers
 local OnSpecChanged
 local ShowUnlockStub
@@ -684,28 +693,6 @@ RefreshContainer = function(key)
     container:Show()
 end
 
--- Re-filters the shared runtime frame's per-unit event registrations to
--- exactly the currently-tracked healer units. UNIT_POWER_UPDATE fires on
--- normal power ticks; UNIT_POWER_FREQUENT fires repeatedly during fast
--- regen/decay (e.g. Evocation, mana potions, burst mana drain); UNIT_CONNECTION
--- fires on connect/disconnect. All three are verified-real registerable
--- events (unlike the earlier, wrong "UNIT_POWER_FREQUENT_UPDATE" guess).
-local TRACK_EVENTS = { "UNIT_POWER_UPDATE", "UNIT_POWER_FREQUENT", "UNIT_CONNECTION" }
-
-SyncUnitEvents = function()
-    if not runtimeFrame then return end
-    for _, ev in ipairs(TRACK_EVENTS) do
-        runtimeFrame:UnregisterEvent(ev)
-    end
-    for _, def in ipairs(CONTAINER_DEFS) do
-        for _, healer in ipairs(currentHealers[def.key]) do
-            for _, ev in ipairs(TRACK_EVENTS) do
-                runtimeFrame:RegisterUnitEvent(ev, healer.unit)
-            end
-        end
-    end
-end
-
 -------------------------------------------------------------------------------
 --  Group roster scan
 -------------------------------------------------------------------------------
@@ -748,7 +735,6 @@ FindHealers = function()
 
     RefreshContainer("party")
     RefreshContainer("raid")
-    SyncUnitEvents()
 end
 
 OnSpecChanged = function(unit)
@@ -910,7 +896,9 @@ EnableRuntime = function()
     frame:RegisterEvent("PLAYER_ENTERING_WORLD")
     frame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
     frame:RegisterEvent("INSPECT_READY")
-    SyncUnitEvents()
+    frame:RegisterEvent("UNIT_POWER_UPDATE")
+    frame:RegisterEvent("UNIT_POWER_FREQUENT")
+    frame:RegisterEvent("UNIT_CONNECTION")
 end
 
 DisableRuntime = function()
