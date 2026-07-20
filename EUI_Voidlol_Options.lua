@@ -21,12 +21,13 @@ local function GetAddonVersion()
     end
 end
 
-local PAGE_QOL          = "QoL"
-local PAGE_TWEAKS       = "Tweaks"
-local PAGE_QUICK_FOCUS  = "Quick Focus"
-local PAGE_COMBAT_TEXT  = "Combat Text"
-local PAGE_CASTBAR      = "Target Castbar"
-local PAGE_HEALER_MANA  = "Healer Mana"
+local PAGE_QOL              = "QoL"
+local PAGE_TWEAKS           = "Tweaks"
+local PAGE_QUICK_FOCUS      = "Quick Focus"
+local PAGE_COMBAT_TEXT      = "Combat Text"
+local PAGE_CASTBAR          = "Target Castbar"
+local PAGE_HEALER_MANA      = "Healer Mana"
+local PAGE_INTERRUPT_TRACKER = "Interrupt Tracker"
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
@@ -47,6 +48,24 @@ initFrame:SetScript("OnEvent", function(self)
     local function Castbar() local d = DB(); return d and d.castbar end
     local function HealerMana() local d = DB(); return d and d.healerMana end
     local function HMFrame(key) local h = HealerMana(); return h and h[key] end
+    local function IT() local d = DB(); return d and d.interruptTracker end
+
+    -- "Blizzard" default + every registered LibSharedMedia statusbar texture.
+    local function BuildBarTextureDropdownData()
+        local values = { Blizzard = "Blizzard (Default)" }
+        local order  = { "Blizzard" }
+        if EllesmereUI.AppendSharedMediaTextures then
+            local names, texOrder, textures = {}, {}, {}
+            EllesmereUI.AppendSharedMediaTextures(names, texOrder, nil, textures)
+            for _, key in ipairs(texOrder) do
+                if key ~= "---" then
+                    values[key] = names[key] or key
+                    order[#order + 1] = key
+                end
+            end
+        end
+        return values, order
+    end
     local castbarPreview
     local castbarHeaderBuilder
     local healerManaPreviewHdr
@@ -1371,6 +1390,426 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
+    --  Interrupt Tracker page
+    ---------------------------------------------------------------------------
+    local function BuildInterruptTrackerPage(pageName, parent, yOffset)
+        local W = EllesmereUI.Widgets
+        local y = yOffset
+        local h
+
+        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        parent._showRowDivider = true
+
+        local function ITOff() return not (IT() and IT().enabled) end
+        local function ReadyColorPickerOff() local c = IT(); return c and c.keepReadyClassColor end
+        local function NotDkTalent() return ITOff() or not (IT() and IT().dkMindFreezeCDRTalent) end
+        local function NameColorReadyCustomOff() return ITOff() or (IT() and IT().nameColorReadyMode == "class") end
+        local function NameColorCooldownCustomOff() return ITOff() or (IT() and IT().nameColorCooldownMode == "class") end
+
+        local barTexValues, barTexOrder = BuildBarTextureDropdownData()
+        local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
+
+        _, h = W:SectionHeader(parent, "GENERAL", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Enabled",
+              tooltip="Shows one status bar per tracked interrupt (yours + party members'). Open EllesmereUI Unlock Mode to preview and position/resize the window.",
+              getValue=function() local c = IT(); return c and c.enabled or false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.enabled = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "BAR APPEARANCE", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Bar Width",
+              min = 60, max = 400, step = 5,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.barWidth or 200 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.barWidth = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Bar Height",
+              min = 10, max = 60, step = 1,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.barHeight or 24 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.barHeight = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Bar Spacing",
+              min = 0, max = 30, step = 1,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.barSpacing or 6 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.barSpacing = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Max Bars",
+              min = 1, max = 20, step = 1,
+              tooltip="Size of the bar pool -- the most rows that can ever be shown at once.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.maxBars or 10 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.maxBars = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Icon Position",
+              values = { left = "Left", right = "Right" },
+              order  = { "left", "right" },
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.iconPosition or "left" end,
+              setValue=function(v)
+                  local c = IT(); if c then c.iconPosition = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Icon Gap",
+              min = 0, max = 20, step = 1,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.iconGap or 4 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.iconGap = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Bar Texture",
+              values = barTexValues, order = barTexOrder,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.barTexture or "Blizzard" end,
+              setValue=function(v)
+                  local c = IT(); if c then c.barTexture = v end
+                  RefreshAll()
+              end },
+            { type="toggle", text="Reverse Fill",
+              tooltip="Bar drains right-to-left instead of left-to-right.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.reverseFill or false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.reverseFill = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Border Thickness",
+              min = 0, max = 4, step = 1,
+              tooltip="Per-bar and per-icon border. 0 = no border.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.borderThickness or 1 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.borderThickness = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Font",
+              values = fontValues, order = fontOrder,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.fontFace or "__global" end,
+              setValue=function(v)
+                  local c = IT(); if c then c.fontFace = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Font Size",
+              min = 8, max = 32, step = 1,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.fontSize or 12 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.fontSize = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Text Color",
+              disabled=ITOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.textColorR or 1), (c and c.textColorG or 1), (c and c.textColorB or 1)
+              end,
+              setValue=function(r, g, b)
+                  local c = IT()
+                  if c then c.textColorR = r; c.textColorG = g; c.textColorB = b end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Bar Background Color",
+              hasAlpha=true,
+              tooltip="While ready, this alpha is also scaled by Ready Color's own alpha -- so a fully transparent Ready Color fades the background too, not just the fill. On cooldown / no data, only this alpha applies.",
+              disabled=ITOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.barBgColorR or 0.08), (c and c.barBgColorG or 0.08), (c and c.barBgColorB or 0.08), (c and c.barBgColorA or 0.95)
+              end,
+              setValue=function(r, g, b, a)
+                  local c = IT()
+                  if c then c.barBgColorR = r; c.barBgColorG = g; c.barBgColorB = b; c.barBgColorA = a end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "COOLDOWN STATE COLORS", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Ready Uses Class Color",
+              tooltip="When on, a ready bar is tinted with the tracked player's class color instead of the Ready Color below.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.keepReadyClassColor or false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.keepReadyClassColor = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="colorpicker", text="Ready Color",
+              hasAlpha=true,
+              tooltip="Alpha controls how translucent the bar fill looks once ready.",
+              disabled=function() return ITOff() or ReadyColorPickerOff() end,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.readyColorR or 0), (c and c.readyColorG or 0.78), (c and c.readyColorB or 0.2), (c and c.readyColorA or 1)
+              end,
+              setValue=function(r, g, b, a)
+                  local c = IT()
+                  if c then c.readyColorR = r; c.readyColorG = g; c.readyColorB = b; c.readyColorA = a end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Ready Text Color",
+              disabled=ITOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.readyTextColorR or 0.2), (c and c.readyTextColorG or 1), (c and c.readyTextColorB or 0.2)
+              end,
+              setValue=function(r, g, b)
+                  local c = IT()
+                  if c then c.readyTextColorR = r; c.readyTextColorG = g; c.readyTextColorB = b end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="On-Cooldown Color Darken",
+              min = 0, max = 100, step = 1,
+              tooltip="Multiplies the class color while on cooldown -- lower = darker.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return (c and c.onCooldownColorMul or 0.7) * 100 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.onCooldownColorMul = v / 100 end
+                  RefreshAll()
+              end },
+            { type="slider", text="On-Cooldown Opacity",
+              min = 0, max = 100, step = 1,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return (c and c.onCooldownAlpha or 0.9) * 100 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.onCooldownAlpha = v / 100 end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="No Data Bar Color",
+              tooltip="Fill color for the placeholder bar shown while a party member's interrupt hasn't been detected yet.",
+              disabled=ITOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.noAddonColorR or 0.2), (c and c.noAddonColorG or 0.2), (c and c.noAddonColorB or 0.2)
+              end,
+              setValue=function(r, g, b)
+                  local c = IT()
+                  if c then c.noAddonColorR = r; c.noAddonColorG = g; c.noAddonColorB = b end
+                  RefreshAll()
+              end },
+            { type="slider", text="No Data Bar Opacity",
+              min = 0, max = 100, step = 1,
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.noAddonOpacity or 80 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.noAddonOpacity = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="No Data Text Color",
+              disabled=ITOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.noAddonTextColorR or 0.6), (c and c.noAddonTextColorG or 0.6), (c and c.noAddonTextColorB or 0.6)
+              end,
+              setValue=function(r, g, b)
+                  local c = IT()
+                  if c then c.noAddonTextColorR = r; c.noAddonTextColorG = g; c.noAddonTextColorB = b end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "NAME COLOR", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Name Color (Ready)",
+              values = { custom = "Custom Color", class = "Class Color" },
+              order  = { "custom", "class" },
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.nameColorReadyMode or "custom" end,
+              setValue=function(v)
+                  local c = IT(); if c then c.nameColorReadyMode = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="colorpicker", text="Ready Name Color",
+              disabled=NameColorReadyCustomOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.nameColorReadyR or 1), (c and c.nameColorReadyG or 1), (c and c.nameColorReadyB or 1)
+              end,
+              setValue=function(r, g, b)
+                  local c = IT()
+                  if c then c.nameColorReadyR = r; c.nameColorReadyG = g; c.nameColorReadyB = b end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Name Color (On Cooldown)",
+              values = { custom = "Custom Color", class = "Class Color" },
+              order  = { "custom", "class" },
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.nameColorCooldownMode or "custom" end,
+              setValue=function(v)
+                  local c = IT(); if c then c.nameColorCooldownMode = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="colorpicker", text="On-Cooldown Name Color",
+              disabled=NameColorCooldownCustomOff,
+              getValue=function()
+                  local c = IT()
+                  return (c and c.nameColorCooldownR or 1), (c and c.nameColorCooldownG or 1), (c and c.nameColorCooldownB or 1)
+              end,
+              setValue=function(r, g, b)
+                  local c = IT()
+                  if c then c.nameColorCooldownR = r; c.nameColorCooldownG = g; c.nameColorCooldownB = b end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "VISIBILITY", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Only In Instances",
+              tooltip="Only show the window while inside a party/raid/scenario instance.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.onlyInInstances or false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.onlyInInstances = v end
+                  RefreshAll()
+              end },
+            { type="toggle", text="Hide In Dungeons",
+              tooltip="Hides specifically while inside a 5-player dungeon.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.hideInDungeons or false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.hideInDungeons = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="slider", text="Max Group Size To Show",
+              min = 1, max = 5, step = 1,
+              tooltip="Hides entirely once the group is bigger than this (i.e. in raids).",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.maxGroupSizeToShow or 5 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.maxGroupSizeToShow = v end
+                  RefreshAll()
+              end },
+            { type="toggle", text="Show \"No Data\" Placeholders",
+              tooltip="Shows a gray placeholder bar for party members whose interrupt hasn't been detected yet.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.showNoAddonPlaceholders ~= false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.showNoAddonPlaceholders = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "TALENT-BASED COOLDOWN ACCURACY (YOU ONLY)", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Enable Talent Adjustments",
+              tooltip="Applies known talent-driven cooldown reductions/multipliers to your own tracked interrupt (Mage Quick Witted, Warrior Honed Reflexes, Evoker Interwoven Threads, Warlock Grimoire: Fel Ravager).",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.enableTalentAdjustments ~= false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.enableTalentAdjustments = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="DK: Mind Freeze CDR Talent",
+              tooltip="Manual flag: you have a talent that shortens Mind Freeze's cooldown on a successful interrupt (not detectable automatically).",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.dkMindFreezeCDRTalent or false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.dkMindFreezeCDRTalent = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="slider", text="CDR Amount (sec)",
+              min = 1, max = 15, step = 1,
+              disabled=NotDkTalent,
+              getValue=function() local c = IT(); return c and c.dkMindFreezeCDRAmount or 3 end,
+              setValue=function(v)
+                  local c = IT(); if c then c.dkMindFreezeCDRAmount = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "PARTY SYNC", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Cross-Confirmation Sync",
+              tooltip="Broadcasts your own kick over an addon message to the party and accepts the same from party members also running this addon, overwriting the local heuristic guess for them with their own reliable reading.",
+              disabled=ITOff,
+              getValue=function() local c = IT(); return c and c.syncEnabled ~= false end,
+              setValue=function(v)
+                  local c = IT(); if c then c.syncEnabled = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        return math.abs(y)
+    end
+
+    ---------------------------------------------------------------------------
     --  Register with EllesmereUI sidebar
     ---------------------------------------------------------------------------
     -- RegisterModule whitelists callers by folder name (via debugstack), and
@@ -1439,7 +1878,7 @@ initFrame:SetScript("OnEvent", function(self)
         RegisterModuleExternal({
             title       = "Voidlol",
             description = description,
-            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
+            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA, PAGE_INTERRUPT_TRACKER },
             buildPage   = function(pageName, parent, yOffset)
                 if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
                 if pageName == PAGE_TWEAKS       then return BuildTweaksPage(pageName, parent, yOffset) end
@@ -1447,6 +1886,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if pageName == PAGE_COMBAT_TEXT  then return BuildCombatTextPage(pageName, parent, yOffset) end
                 if pageName == PAGE_CASTBAR      then return BuildCastbarPage(pageName, parent, yOffset) end
                 if pageName == PAGE_HEALER_MANA  then return BuildHealerManaPage(pageName, parent, yOffset) end
+                if pageName == PAGE_INTERRUPT_TRACKER then return BuildInterruptTrackerPage(pageName, parent, yOffset) end
             end,
             getHeaderBuilder = function(pageName)
                 if pageName == PAGE_CASTBAR then

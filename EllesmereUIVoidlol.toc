@@ -20,6 +20,7 @@ EllesmereUIVoidlol_QuickFocus.lua
 EllesmereUIVoidlol_CombatText.lua
 EllesmereUIVoidlol_Castbar.lua
 EllesmereUIVoidlol_HealerMana.lua
+EllesmereUIVoidlol_InterruptTracker.lua
 
 # Options
 EUI_Voidlol_Options.lua

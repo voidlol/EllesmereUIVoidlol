@@ -165,6 +165,77 @@ local defaults = {
                     pos                = nil,
                 },
             },
+
+            interruptTracker = {
+                enabled = false,
+
+                -- ---- Bar appearance ----
+                barWidth        = 200,
+                barHeight       = 24,
+                barSpacing      = 6,
+                maxBars         = 10,
+                iconPosition    = "left", -- "left" | "right"
+                iconGap         = 4,
+                reverseFill     = false,
+                barTexture      = "Blizzard", -- "Blizzard" or "sm:<LibSharedMedia name>"
+                fontFace        = "__global",
+                fontSize        = 12,
+                textColorR      = 1,
+                textColorG      = 1,
+                textColorB      = 1,
+                barBgColorR     = 0.08,
+                barBgColorG     = 0.08,
+                barBgColorB     = 0.08,
+                barBgColorA     = 0.95,
+                borderThickness = 1, -- 0 = no border
+
+                -- ---- Position (dragged via EllesmereUI Unlock Mode) ----
+                pos             = nil,
+
+                -- ---- Bar colors by cooldown state ----
+                readyColorR          = 0.0,
+                readyColorG          = 0.78,
+                readyColorB          = 0.2,
+                readyColorA          = 1,
+                readyTextColorR      = 0.2,
+                readyTextColorG      = 1,
+                readyTextColorB      = 0.2,
+                keepReadyClassColor  = false,
+                onCooldownColorMul   = 0.7,
+                onCooldownAlpha      = 0.9,
+                noAddonColorR        = 0.2,
+                noAddonColorG        = 0.2,
+                noAddonColorB        = 0.2,
+                noAddonOpacity       = 80,
+                noAddonTextColorR    = 0.6,
+                noAddonTextColorG    = 0.6,
+                noAddonTextColorB    = 0.6,
+
+                -- ---- Name text color, per ready/cooldown state ----
+                -- mode: "custom" (use the R/G/B below) | "class" (tracked player's class color)
+                nameColorReadyMode      = "custom",
+                nameColorReadyR         = 1,
+                nameColorReadyG         = 1,
+                nameColorReadyB         = 1,
+                nameColorCooldownMode   = "custom",
+                nameColorCooldownR      = 1,
+                nameColorCooldownG      = 1,
+                nameColorCooldownB      = 1,
+
+                -- ---- Visibility rules ----
+                onlyInInstances         = false,
+                hideInDungeons          = false,
+                maxGroupSizeToShow      = 5,
+                showNoAddonPlaceholders = true,
+
+                -- ---- Talent-based cooldown accuracy (own player only) ----
+                enableTalentAdjustments = true,
+                dkMindFreezeCDRTalent   = false,
+                dkMindFreezeCDRAmount   = 3,
+
+                -- ---- Addon-message cross-confirmation sync (party) ----
+                syncEnabled = true,
+            },
         },
     },
 }
@@ -189,6 +260,7 @@ local function ApplyAll()
     if EVL.ApplyCombatText then EVL.ApplyCombatText() end
     if EVL.ApplyCastbar then EVL.ApplyCastbar() end
     if EVL.ApplyHealerMana then EVL.ApplyHealerMana() end
+    if EVL.ApplyInterruptTracker then EVL.ApplyInterruptTracker() end
 end
 EVL.ApplyAll = ApplyAll
 _G._EVL_ApplyAll = ApplyAll
@@ -207,4 +279,5 @@ function EBS:OnEnable()
     ApplyAll()
     if EVL.InitCastbarHooks then EVL.InitCastbarHooks() end
     if EVL.InitHealerMana then EVL.InitHealerMana() end
+    if EVL.InitInterruptTracker then EVL.InitInterruptTracker() end
 end
