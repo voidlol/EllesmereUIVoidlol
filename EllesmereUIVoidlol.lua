@@ -183,6 +183,7 @@ local function ApplyAll()
     local cfg = EVL.DB()
     if not cfg then return end
     if EVL.ApplyQoL then EVL.ApplyQoL() end
+    if EVL.ApplyTweaks then EVL.ApplyTweaks() end
     if EVL.ApplyStatusBar then EVL.ApplyStatusBar() end
     if EVL.ApplyQuickFocus then EVL.ApplyQuickFocus() end
     if EVL.ApplyCombatText then EVL.ApplyCombatText() end
