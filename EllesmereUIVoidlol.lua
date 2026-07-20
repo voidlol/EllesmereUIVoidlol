@@ -73,7 +73,7 @@ local defaults = {
             },
 
             combatText = {
-                enabled = true, -- master switch; per-frame enabled flags below still apply on top
+                enabled = false, -- master switch; per-frame enabled flags below still apply on top
 
                 incomingDamage = {
                     enabled      = false,
@@ -106,7 +106,7 @@ local defaults = {
             },
 
             castbar = {
-                enabled                   = true,
+                enabled                   = false,
 
                 detachIcon                = false,
                 iconSize                  = 32,
