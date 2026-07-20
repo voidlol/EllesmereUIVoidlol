@@ -6,6 +6,7 @@
 ## Author: Ellesmere
 ## Version: 1.2.5
 ## Dependencies: EllesmereUI, EllesmereUIUnitFrames
+## OptionalDeps: EllesmereUICooldownManager
 ## SavedVariables: EllesmereUIVoidlolDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 

@@ -25,6 +25,8 @@ local defaults = {
                 debuffNotDispellableColorG = 0.5,
                 debuffNotDispellableColorB = 0.5,
 
+                mirrorCdmCooldownsVisibilityToBars = false,
+
                 statusBar = {
                     enabled = false,
                     spacing = 12,

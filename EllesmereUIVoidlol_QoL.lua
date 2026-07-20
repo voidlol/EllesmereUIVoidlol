@@ -305,9 +305,115 @@ local function ApplyDebuffNotDispellableColor()
     EnsureReloadFramesHook()
 end
 
+-------------------------------------------------------------------------------
+--  Mirror CDM Cooldowns Visibility to CDM Bars
+--  EllesmereUICooldownManager's CDM Bars page (the Essential/Utility/Buff
+--  icon cooldown viewers) has a per-bar Visibility condition; its Tracking
+--  Bars page (the separate buff-bar tracker) has no equivalent setting at
+--  all -- always shown regardless of what Cooldowns is doing. Tracking Bars
+--  frames are globally named (ECME_TBBWrap1, ECME_TBBWrap2, ... one per
+--  configured bar, contiguous from 1).
+--
+--  Four dead ends before this: (1) CDM's visibility pass
+--  (_CDMApplyVisibility) is a FILE-LOCAL function -- every internal call
+--  site invokes that local directly, never through its _G._ECME_ApplyVisibility
+--  alias, so wrapping the global never fires. (2) EssentialCooldownViewer:
+--  SetAlpha looked like the right hook target, but that Blizzard viewer is
+--  SHARED by every bar routed through it and only goes to 0 when ALL of them
+--  are hidden -- a single bar (e.g. the default "cooldowns" bar) hiding on
+--  its own condition hides that bar's OWN frame/icons, not the shared
+--  viewer, so the viewer's alpha stayed 1 and never reflected that one
+--  bar's state. _G._ECME_GetBarFrame("cooldowns") (CDM's own documented
+--  "cross-addon frame lookup" accessor) fixed THAT -- it returns the exact
+--  frame _CDMApplyVisibility sets to alpha 0/1 for that one bar. (3) Setting
+--  the Tracking Bars frame's alpha directly still didn't stick: TBB's own
+--  ~60fps tick (UpdateTrackedBuffBarTimers in EllesmereUICdmBuffBars.lua)
+--  ends with a "smooth opacity lerp" pass that continuously drives every
+--  bar's alpha back toward bar._opacityTarget (its configured opacity,
+--  normally 1) -- a one-shot SetAlpha(0) reads as "off target" and gets
+--  lerped straight back, and fighting it with our own repeating ticker just
+--  produced a sawtooth flicker (ticker sets 0, lerp drags it back up before
+--  the next tick). (4) This -- instead of touching alpha at all, override
+--  Show() on each bar frame to refuse it while hidden; TBB's tick still
+--  calls bar:Show() on every active-buff edge same as always, our override
+--  just no-ops that call, so the frame stays truly Hidden (not merely
+--  alpha-0) and nothing is fighting anything. No ticker needed: reacts once
+--  per Cooldowns visibility change via a real hook on the Cooldowns bar's
+--  own SetAlpha, and force-Hide()s anything already shown at that moment.
+-------------------------------------------------------------------------------
+local hookedTBBFrames = setmetatable({}, { __mode = "k" })
+
+local function EnsureTBBShowBlock(wrap)
+    if hookedTBBFrames[wrap] then return end
+    hookedTBBFrames[wrap] = true
+    local origShow = wrap.Show
+    wrap.Show = function(self, ...)
+        if self._evlMirrorHide then return end
+        return origShow(self, ...)
+    end
+end
+
+local function GetCdmCooldownsBarFrame()
+    return _G._ECME_GetBarFrame and _G._ECME_GetBarFrame("cooldowns")
+end
+
+-- Tracking Bars frames are contiguously numbered from 1 with no exposed
+-- count/list accessor to read instead, so this scans by name and stops at
+-- the first gap; 200 is just a sane hard backstop, never actually reached.
+local TBB_FRAME_SCAN_CAP = 200
+
+local function ApplyTBBVisibilityMirror()
+    local cfg = DB()
+    local cdBar = GetCdmCooldownsBarFrame()
+    local shouldHide = cfg and cfg.mirrorCdmCooldownsVisibilityToBars
+        and cdBar and cdBar:GetAlpha() == 0
+
+    for i = 1, TBB_FRAME_SCAN_CAP do
+        local wrap = _G["ECME_TBBWrap" .. i]
+        if not wrap then break end
+        EnsureTBBShowBlock(wrap)
+        wrap._evlMirrorHide = shouldHide
+        if shouldHide and wrap:IsShown() then wrap:Hide() end
+    end
+end
+
+local mirrorHookInstalled = false
+local mirrorRetryFrame
+
+local function EnsureCDMVisibilityHook()
+    if mirrorHookInstalled then return end
+    local cdBar = GetCdmCooldownsBarFrame()
+    if not cdBar then return end
+    mirrorHookInstalled = true
+    hooksecurefunc(cdBar, "SetAlpha", ApplyTBBVisibilityMirror)
+end
+
+-- The bar frame may not exist yet the first time ApplyQoL runs (very early
+-- login timing); retry on the next loading-screen transition, which is
+-- always well after both addons are up.
+local function EnsureMirrorRetry()
+    if mirrorHookInstalled or mirrorRetryFrame then return end
+    mirrorRetryFrame = CreateFrame("Frame")
+    mirrorRetryFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    mirrorRetryFrame:SetScript("OnEvent", function(self)
+        EnsureCDMVisibilityHook()
+        if mirrorHookInstalled then
+            ApplyTBBVisibilityMirror()
+            self:UnregisterAllEvents()
+        end
+    end)
+end
+
+local function ApplyMirrorCdmVisibility()
+    EnsureCDMVisibilityHook()
+    if not mirrorHookInstalled then EnsureMirrorRetry() end
+    ApplyTBBVisibilityMirror()
+end
+
 function EVL.ApplyQoL()
     ApplyDragonridingOverride()
     ApplyPlayedSuppression()
     ApplyRunesSpecColor()
     ApplyDebuffNotDispellableColor()
+    ApplyMirrorCdmVisibility()
 end

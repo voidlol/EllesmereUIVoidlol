@@ -614,6 +614,19 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
+        _, h = W:SectionHeader(parent, "COOLDOWN MANAGER", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Mirror CDM Cooldowns Visibility to CDM Bars",
+              tooltip="EllesmereUICooldownManager's CDM Bars (Cooldowns) page has a Visibility condition; Tracking Bars has none and always shows. This hides Tracking Bars too whenever the Cooldowns viewer is hidden by its own Visibility setting, without touching bars CDM is already hiding for its own reasons.",
+              getValue=function() local c = QoL(); return c and c.mirrorCdmCooldownsVisibilityToBars or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.mirrorCdmCooldownsVisibilityToBars = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
         return math.abs(y)
     end
 
