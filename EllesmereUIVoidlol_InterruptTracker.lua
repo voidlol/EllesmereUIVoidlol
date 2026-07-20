@@ -5,11 +5,16 @@
 --  InterruptTrackerReference.lua (a standalone reference build consolidated
 --  from a separate addon's IT_Database/IT_Core/InterruptTrack files).
 --
---  Detection: your own kick is read directly off UNIT_SPELLCAST_SUCCEEDED
---  (100% reliable). Party members' kicks can't be read directly (WoW 12.x
---  taints the spellID on other units' casts), so they're *inferred* by
---  correlating a "this party member just cast something" signal with a
---  "this mob's cast got interrupted" signal within a tight time window.
+--  Detection: your own kick-cast is read directly off UNIT_SPELLCAST_SUCCEEDED
+--  (100% reliable). Party members' cast attempts are *inferred* (their
+--  spellID is usually tainted) via ResolveInterruptSpell / the off-cooldown
+--  fallback -- see HandlePartyCast. Whether that attempt actually LANDED is
+--  no longer a timing guess: UNIT_SPELLCAST_INTERRUPTED / _CHANNEL_STOP
+--  carry an extra `interruptedBy` GUID identifying who landed it. The raw
+--  GUID is a secret value for anyone but yourself, but UnitTokenFromGUID
+--  (resolves only for your OWN GUID) and UnitNameFromGUID/UnitClassFromGUID
+--  (resolve even on a secret GUID -- "blessed" display-only resolvers) let
+--  us read WHO without ever touching the GUID itself -- see CONFIRM HIT.
 --  If a party member also runs this addon, their own kick reading is
 --  broadcast over an addon message (chat type "PARTY") and overwrites the
 --  local heuristic guess for that person -- see the SYNC section.
@@ -17,9 +22,17 @@
 --  Deviations from the reference build:
 --   - Every user-facing tunable in the reference's local `S` settings table
 --     now lives in SavedVariables (DB()/cfg below) and has an Options UI
---     page (EUI_Voidlol_Options.lua). Purely technical constants (timing
---     windows for signal correlation, addon-message prefixes, inspect retry
---     schedule) stay hardcoded near the top of this file.
+--     page (EUI_Voidlol_Options.lua). Purely technical constants (addon-
+--     message prefixes, inspect retry schedule, hit/miss confirm delay)
+--     stay hardcoded near the top of this file.
+--   - The reference attributed a landed interrupt to a party member by
+--     correlating cast-timing against a nameplate UNIT_SPELLCAST_INTERRUPTED
+--     signal within a ~55ms window (or, failing that, guessing by proximity/
+--     targeting). That's gone: UNIT_SPELLCAST_INTERRUPTED's `interruptedBy`
+--     names the interrupter directly, so attribution is exact instead of a
+--     timing guess. The old SIGNAL CORRELATION section (signal tape, match
+--     window, aura/cluster suppression, proximity fallback) is removed
+--     entirely -- CONFIRM HIT below replaces it.
 --   - No global export (the reference exposed `_G.InterruptTrackerReference`
 --     for standalone testing). Cross-section forward references that the
 --     reference solved with a global `ITR` table (`ITR.onKickDetected` /
@@ -51,12 +64,7 @@ local EVL = ns.EVL
 --  Technical constants -- NOT user settings (see file header).
 -------------------------------------------------------------------------------
 local REFRESH_INTERVAL       = 0.05  -- seconds between bar redraws (20/s)
-local SIGNAL_RETENTION       = 0.35  -- seconds a signal stays on the correlation tape
-local CORRELATE_INTERVAL     = 0.04  -- how often the tape is scanned for a match
-local MATCH_WINDOW           = 0.055 -- max gap between a "cast" and "interrupt" signal to call it a match
-local AURA_SUPPRESS_WINDOW   = 0.028 -- aura-appears-near-interrupt -> treat as a non-kick side effect
-local CLUSTER_SUPPRESS_WINDOW = 0.018 -- 2+ interrupts this close together -> ambiguous, drop all
-local ATTRIBUTION_MAX_RANGE  = 35    -- yards; fallback attribution-by-proximity range
+local MISS_CONFIRM_DELAY     = 0.5   -- seconds to wait for an interruptedBy hit confirmation before declaring a detected cast attempt a miss
 local INSPECT_RETRY_DELAYS   = { 1, 2, 4, 8, 15, 25 } -- seconds; spec-learning retry schedule
 local SYNC_PREFIX            = "ITKICK1" -- C_ChatInfo addon-message prefix (<=16 chars)
 local SYNC_MESSAGE_PREFIX    = "IT1"     -- tag prepended to our payloads
@@ -398,9 +406,41 @@ local kickNoInterrupt = {} -- [name] = true (e.g. a healer spec with no kick)
 
 local function KickRegCreate(name)
     if not kickRegistry[name] then
-        kickRegistry[name] = { spellID = 0, baseCd = 15, cdEnd = 0, class = nil, extraKicks = {} }
+        kickRegistry[name] = { spellID = 0, baseCd = 15, cdEnd = 0, class = nil, extraKicks = {}, lastKickResult = nil, missTimer = nil }
     end
     return kickRegistry[name]
+end
+
+-- CONFIRM HIT: entry.lastKickResult tracks whether the most recently
+-- detected cast attempt for this member actually landed --
+-- nil/"pending"/"hit"/"miss". SetKickPending is called the moment a cast
+-- attempt is detected (own UNIT_SPELLCAST_SUCCEEDED, or a party member's
+-- inferred cast); if no ConfirmKickHit arrives for them within
+-- MISS_CONFIRM_DELAY, the pending timer declares it a miss. Real interrupt
+-- abilities land (or don't) essentially instantly, so this window is
+-- generous, not tight like the old correlation match window.
+local function CancelMissTimer(entry)
+    if entry.missTimer then
+        entry.missTimer:Cancel()
+        entry.missTimer = nil
+    end
+end
+
+local function SetKickPending(entry)
+    CancelMissTimer(entry)
+    entry.lastKickResult = "pending"
+    entry.missTimer = C_Timer.NewTimer(MISS_CONFIRM_DELAY, function()
+        entry.missTimer = nil
+        if entry.lastKickResult == "pending" then
+            entry.lastKickResult = "miss"
+            if Hooks.onKickRegistryChanged then Hooks.onKickRegistryChanged() end
+        end
+    end)
+end
+
+local function ConfirmKickHit(entry)
+    CancelMissTimer(entry)
+    entry.lastKickResult = "hit"
 end
 
 -- Registers party members by class the moment they're visible, so a
@@ -544,23 +584,28 @@ local function HandlePartyCast(unit, spellID, memberName)
                 }
             end
         else
-            -- spellData.cd is the actual bug fix here, NOT entry.baseCd: for
-            -- an uninspectable member (follower NPCs can't be CanInspect()'d,
-            -- so AutoRegisterParty's spec resolution never runs for them),
-            -- entry.baseCd is stuck at whatever it was set to at initial
-            -- registration -- the class-default cooldown -- which is simply
-            -- wrong whenever that spellID's real cooldown differs by spec
-            -- (Wind Shear: 12s most Shaman specs, 30s Resto, both spellID
-            -- 57994). spellData.cd reflects the observed cast; entry.baseCd
-            -- (== duration, used for the bar's fill ratio in BuildDisplayList)
-            -- MUST be kept in sync with whatever actually drives cdEnd below
-            -- -- otherwise the bar and the countdown text disagree: text
-            -- counts down correctly from cdEnd, but the bar stays clamped
-            -- at full until remain finally drops under the stale duration.
-            local cd = spellData.cd or entry.baseCd or 15
+            -- Prefer entry.baseCd (per-member, spec-aware where resolvable)
+            -- over spellData.cd (the shared ALL_INTERRUPTS lookup). Several
+            -- specs share a canonical spellID with a DIFFERENT real cooldown
+            -- -- Wind Shear is 12s for most Shaman specs but 30s for
+            -- Restoration, both keyed under spellID 57994 -- and since
+            -- specOverrides is built into ALL_INTERRUPTS after classKicks,
+            -- ALL_INTERRUPTS[57994].cd is permanently 30 for the whole
+            -- session, regardless of which Shaman actually cast it. For an
+            -- uninspectable member (follower NPCs can't be CanInspect()'d),
+            -- entry.baseCd stays at the classKicks default -- 12s, correct
+            -- for the common case (most Shamans, including most followers,
+            -- aren't Restoration) -- which beats blindly trusting the
+            -- collided shared-table value. spellData.cd is only the
+            -- fallback for a brand new entry with no baseCd at all yet.
+            -- Whichever wins, baseCd and cdEnd are ALWAYS set from the same
+            -- `cd` so the bar's fill ratio and the countdown text can never
+            -- disagree with each other.
+            local cd = entry.baseCd or spellData.cd or 15
             entry.baseCd = cd
             entry.cdEnd = now + cd
             entry.lastKickAt = now
+            SetKickPending(entry)
         end
     end
 
@@ -611,6 +656,7 @@ local function HandleOwnKick(spellID)
     entry.baseCd = cd
     entry.cdEnd = now + cd
     entry.lastKickAt = now
+    SetKickPending(entry)
 
     if Hooks.onKickDetected then
         Hooks.onKickDetected(myName, resolvedID, cd, entry.cdEnd)
@@ -618,177 +664,63 @@ local function HandleOwnKick(spellID)
 end
 
 -------------------------------------------------------------------------------
---  SIGNAL CORRELATION (party members' kicks)
---  Every party cast and every nameplate interrupt is pushed onto a
---  short-lived "tape". Periodically the tape is scanned: the most recent
---  interrupt signal is matched against the closest-in-time cast signal
---  within MATCH_WINDOW, and that pairing becomes the attributed kick.
---  Ambiguous or explainable-by-other-means cases (simultaneous interrupts, a
---  buff appearing on the same target) are dropped rather than guessed.
+--  CONFIRM HIT -- resolves who actually landed a detected interrupt, from
+--  UNIT_SPELLCAST_INTERRUPTED / _CHANNEL_STOP's `interruptedBy` GUID. See
+--  the file header for why this is reliable despite the GUID being secret.
 -------------------------------------------------------------------------------
-local signalTape       = {}
-local signalSeq        = 0
-local needsCorrelation = false
-local lastCorrelateAt  = 0
-local recentCasts      = {} -- [memberName] = { t, spellID }
-
-local function PushSignal(kind, unit)
-    signalSeq = signalSeq + 1
-    signalTape[#signalTape + 1] = { seq = signalSeq, kind = kind, unit = unit, at = GetTime(), consumed = false }
-    needsCorrelation = true
+local function FindPartyUnitByName(name)
+    for i = 1, 4 do
+        local u = "party" .. i
+        if UnitExists(u) and SafeUnitName(u) == name then return u end
+    end
+    return nil
 end
 
-local function PruneSignalTape(now)
-    local kept = {}
-    local minAt = now - SIGNAL_RETENTION
-    for i = 1, #signalTape do
-        local s = signalTape[i]
-        if s and s.at and s.at >= minAt then kept[#kept + 1] = s end
-    end
-    signalTape = kept
-end
+local function ConfirmInterruptHit(interruptedBy)
+    if interruptedBy == nil then return end
 
-local function CorrelateSignals()
-    local now = GetTime()
-    if not needsCorrelation then return end
-    if now - lastCorrelateAt < CORRELATE_INTERVAL then return end
-    lastCorrelateAt = now
-    PruneSignalTape(now)
-
-    local casts, interrupts, auras = {}, {}, {}
-    for i = 1, #signalTape do
-        local s = signalTape[i]
-        if s and not s.consumed then
-            if s.kind == "cast" then casts[#casts + 1] = s
-            elseif s.kind == "interrupt" then interrupts[#interrupts + 1] = s
-            elseif s.kind == "aura" then auras[#auras + 1] = s
-            end
+    -- Resolves only for YOUR OWN GUID; nil for anyone else's (still-secret)
+    -- GUID. Our own kick is already reliably detected off UNIT_SPELLCAST_
+    -- SUCCEEDED("player") -- this just confirms that pending cast landed.
+    local okToken, token = pcall(UnitTokenFromGUID, interruptedBy)
+    if okToken and token then
+        local myName = SafeUnitName("player")
+        local myEntry = myName and kickRegistry[myName]
+        if myEntry then
+            ConfirmKickHit(myEntry)
+            if Hooks.onKickRegistryChanged then Hooks.onKickRegistryChanged() end
         end
-    end
-
-    if #interrupts == 0 or #casts == 0 then needsCorrelation = false; return end
-
-    table.sort(interrupts, function(a, b) return (a.at or 0) < (b.at or 0) end)
-    local freshest = interrupts[#interrupts]
-
-    local clustered = 0
-    for i = 1, #interrupts do
-        if math.abs((interrupts[i].at or 0) - (freshest.at or 0)) <= CLUSTER_SUPPRESS_WINDOW then
-            clustered = clustered + 1
-        end
-    end
-    if clustered > 1 then
-        for i = 1, #interrupts do interrupts[i].consumed = true end
-        needsCorrelation = false
         return
     end
 
-    for i = 1, #auras do
-        if auras[i].unit == freshest.unit and math.abs((freshest.at or 0) - (auras[i].at or 0)) <= AURA_SUPPRESS_WINDOW then
-            freshest.consumed = true
-            needsCorrelation = false
-            return
-        end
+    -- Not us -- UnitNameFromGUID resolves a display name even on a secret
+    -- GUID (a "blessed" resolver, like UnitTokenFromGUID above), without
+    -- ever touching the raw GUID value itself.
+    local okName, rawName = pcall(UnitNameFromGUID, interruptedBy)
+    if not okName or not rawName then return end
+    local name = NormalizeName(rawName)
+
+    local entry = kickRegistry[name]
+    if not entry then
+        -- We never detected this member's cast attempt (fully opaque
+        -- spellID and they weren't registered yet) -- this hit confirmation
+        -- is the strongest signal we'll get, so register them now if we can
+        -- find their unit (for class/spec-based cooldown resolution).
+        local u = FindPartyUnitByName(name)
+        if not u then return end
+        local _, cls = UnitClass(u)
+        local kick = cls and CLASS_INTERRUPTS[cls]
+        if not kick then return end
+        entry = KickRegCreate(name)
+        entry.class = cls
+        entry.spellID = kick.id
+        entry.baseCd = kick.cd
+        entry.cdEnd = GetTime() + kick.cd
+        entry.lastKickAt = GetTime()
     end
 
-    local bestCast, bestDiff = nil, math.huge
-    for i = 1, #casts do
-        local diff = math.abs((freshest.at or 0) - (casts[i].at or 0))
-        if diff <= MATCH_WINDOW and diff < bestDiff then bestDiff = diff; bestCast = casts[i] end
-    end
-
-    freshest.consumed = true
-    if bestCast then
-        bestCast.consumed = true
-        local unit = bestCast.unit
-        local memberName
-        if unit and unit:find("^partypet") then
-            local idx = unit:match("partypet(%d)")
-            memberName = idx and UnitName("party" .. idx)
-        else
-            memberName = unit and UnitName(unit)
-        end
-        if memberName then
-            memberName = NormalizeName(memberName)
-            local rc = recentCasts[memberName]
-            if rc and rc.spellID then
-                HandlePartyCast(unit, rc.spellID, memberName)
-            end
-        end
-    end
-
-    needsCorrelation = false
-end
-
--- Fallback used when a nameplate interrupt fires but correlation found no
--- matching cast signal (e.g. the cast's spellID could not be read at all):
--- attribute it to whichever off-cooldown party member is targeting the mob,
--- or failing that, whoever is closest to it.
-local function AttributeInterruptToParty(mobUnit)
-    local now = GetTime()
-    local mobX, mobY, _, mobMap = UnitPosition(mobUnit)
-
-    local function dist(pu)
-        if not mobX or not mobMap then return nil end
-        local px, py, _, pmap = UnitPosition(pu)
-        if not px or pmap ~= mobMap then return nil end
-        return math.sqrt((mobX - px) ^ 2 + (mobY - py) ^ 2)
-    end
-
-    local candidates = {}
-    for i = 1, 4 do
-        local pu = "party" .. i
-        if UnitExists(pu) then
-            local name = SafeUnitName(pu)
-            if name then
-                local entry = kickRegistry[name]
-                if entry and entry.spellID and entry.spellID > 0 then
-                    local onCD = entry.cdEnd and entry.cdEnd > now
-                    if not onCD then
-                        local d = dist(pu)
-                        candidates[#candidates + 1] = {
-                            unit = pu, name = name, spellID = entry.spellID,
-                            targetMatches = UnitIsUnit(pu .. "target", mobUnit),
-                            dist = d, inRange = (d == nil or d <= ATTRIBUTION_MAX_RANGE),
-                        }
-                    end
-                end
-            end
-        end
-    end
-
-    local function pickClosest(set)
-        if #set == 0 then return nil end
-        if #set == 1 then return set[1] end
-        local best, bestD, fallback
-        for _, c in ipairs(set) do
-            if c.dist then
-                if not best or c.dist < bestD then best = c; bestD = c.dist end
-            elseif not fallback then
-                fallback = c
-            end
-        end
-        return best or fallback
-    end
-
-    local targeting, inRange = {}, {}
-    for _, c in ipairs(candidates) do
-        if c.targetMatches then targeting[#targeting + 1] = c end
-        if c.inRange then inRange[#inRange + 1] = c end
-    end
-
-    local winner
-    if #targeting == 1 then winner = targeting[1]
-    elseif #targeting > 1 then winner = pickClosest(targeting)
-    elseif #inRange == 1 then winner = inRange[1]
-    elseif #inRange > 1 then winner = pickClosest(inRange)
-    elseif #candidates == 1 then winner = candidates[1]
-    end
-
-    if winner then
-        recentCasts[winner.name] = { t = now, spellID = winner.spellID }
-        HandlePartyCast(winner.unit, winner.spellID, winner.name)
-    end
+    ConfirmKickHit(entry)
+    if Hooks.onKickRegistryChanged then Hooks.onKickRegistryChanged() end
 end
 
 -------------------------------------------------------------------------------
@@ -823,18 +755,21 @@ playerFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
         if not usedID then usedID = ResolveNumber(spellID) end
         if usedID and ALL_INTERRUPTS[usedID] then
             HandleOwnKick(usedID)
-            PushSignal("cast", "player")
         end
     else
         local resolvedID = SPELL_ALIASES[spellID] or spellID
         if ALL_INTERRUPTS[resolvedID] then
             HandleOwnKick(resolvedID)
-            PushSignal("cast", "player")
         end
     end
 end)
 
--- Party units: push a "cast" signal for correlation (spellID usually tainted).
+-- Party units: their own cast succeeding tells us WHO attempted a kick (not
+-- whether it landed -- see CONFIRM HIT for that). spellID is usually tainted
+-- for other units, so ResolveInterruptSpell tries a name-based lookup first
+-- (works even on a tainted spellID); if that also fails, fall back to
+-- whatever this member's registry currently says their interrupt is, if
+-- it's off cooldown (a guess, same as the reference build's fallback).
 local partyFrame = CreateFrame("Frame", nil, UIParent); partyFrame:Hide()
 partyFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
     if not unit then return end
@@ -847,50 +782,27 @@ partyFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
     end
     if not memberName then return end
 
-    local data, cleanID = ResolveInterruptSpell(spellID)
+    local data = ResolveInterruptSpell(spellID)
     if data then
-        recentCasts[memberName] = { t = GetTime(), spellID = data.id }
-        PushSignal("cast", unit)
+        HandlePartyCast(unit, data.id, memberName)
     else
-        -- spellID fully tainted -> fall back to whatever this member's
-        -- registry currently says their interrupt is, if it's off cooldown.
         local entry = kickRegistry[memberName]
         if entry and entry.spellID and entry.spellID > 0 then
             local onCD = entry.cdEnd and entry.cdEnd > GetTime()
             if not onCD then
-                recentCasts[memberName] = { t = GetTime(), spellID = entry.spellID }
-                PushSignal("cast", unit)
+                HandlePartyCast(unit, entry.spellID, memberName)
             end
         end
     end
 end)
 
--- Nameplates: interrupt + aura signals.
+-- Nameplates: UNIT_SPELLCAST_INTERRUPTED / _CHANNEL_STOP's interruptedBy
+-- names who landed it directly -- see CONFIRM HIT.
 local npFrame = CreateFrame("Frame", nil, UIParent); npFrame:Hide()
-npFrame:SetScript("OnEvent", function(_, event, unit, ...)
-    if event == "UNIT_SPELLCAST_INTERRUPTED" then
-        if unit and unit:find("^nameplate") then
-            PushSignal("interrupt", unit)
-
-            local playerKickLikely = false
-            local myName = SafeUnitName("player")
-            local myEntry = myName and kickRegistry[myName]
-            if myEntry and UnitIsUnit("target", unit) then
-                local timeSinceKick = myEntry.lastKickAt and (GetTime() - myEntry.lastKickAt) or 999
-                if timeSinceKick < 0.3 then playerKickLikely = true end
-            end
-            if not playerKickLikely then
-                C_Timer.After(0, function() AttributeInterruptToParty(unit) end)
-            end
-        end
-    elseif event == "UNIT_AURA" then
-        if unit and unit:find("^nameplate") then
-            PushSignal("aura", unit)
-        end
-    end
+npFrame:SetScript("OnEvent", function(_, event, unit, castGUID, spellID, interruptedBy)
+    if not (unit and unit:find("^nameplate")) then return end
+    ConfirmInterruptHit(interruptedBy)
 end)
-
-local corrFrame = CreateFrame("Frame", nil, UIParent); corrFrame:Hide()
 
 local rosterFrame = CreateFrame("Frame", nil, UIParent); rosterFrame:Hide()
 rosterFrame:SetScript("OnEvent", function()
@@ -988,6 +900,12 @@ local function CreateBar()
     bar.timeText = bar.overlay:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
     bar.timeText:SetJustifyH("RIGHT")
 
+    -- Hit/miss result badge for the most recent cast attempt while on
+    -- cooldown -- centered on the bar itself (see RefreshBars).
+    bar.resultIcon = bar.overlay:CreateTexture(nil, "OVERLAY", nil, 1)
+    bar.resultIcon:SetPoint("CENTER", bar, "CENTER", 0, 0)
+    bar.resultIcon:Hide()
+
     bar:Hide()
     return bar
 end
@@ -1045,6 +963,7 @@ local function ApplyLayout()
         -- "ready" state additionally fades the background along with the
         -- Ready Color's own alpha (see RefreshBars).
         bar.bg:SetColorTexture(cfg.barBgColorR or 0.08, cfg.barBgColorG or 0.08, cfg.barBgColorB or 0.08, 1)
+        bar.resultIcon:SetSize(math.max(8, (cfg.barHeight or 24) - 8), math.max(8, (cfg.barHeight or 24) - 8))
 
         if PP and PP.ShowBorder and PP.HideBorder then
             if thickness <= 0 then
@@ -1145,11 +1064,13 @@ local function BuildDisplayList()
             list[#list + 1] = {
                 name = name, classTag = classTag, spellID = reg.spellID,
                 duration = reg.baseCd, endTime = reg.cdEnd or 0, noAddon = false,
+                kickResult = reg.lastKickResult,
             }
             for _, ek in ipairs(reg.extraKicks) do
                 list[#list + 1] = {
                     name = name, classTag = classTag, spellID = ek.spellID,
                     duration = ek.baseCd, endTime = ek.cdEnd or 0, noAddon = false,
+                    kickResult = nil,
                 }
             end
             return true
@@ -1259,6 +1180,7 @@ local function RefreshBars()
                 bar.timeText:SetText("No data")
                 bar.timeText:SetTextColor(cfg.noAddonTextColorR or 0.6, cfg.noAddonTextColorG or 0.6, cfg.noAddonTextColorB or 0.6, 1)
                 bar.nameText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
+                bar.resultIcon:Hide()
             elseif isReady then
                 -- The background sits behind the fill, so a translucent Ready
                 -- Color alone would still show an opaque backdrop through it.
@@ -1280,6 +1202,7 @@ local function RefreshBars()
                 else
                     bar.nameText:SetTextColor(cfg.nameColorReadyR or 1, cfg.nameColorReadyG or 1, cfg.nameColorReadyB or 1, 1)
                 end
+                bar.resultIcon:Hide()
             else
                 local mul = cfg.onCooldownColorMul or 0.7
                 bar:SetStatusBarColor(cr * mul, cg * mul, cb * mul, cfg.onCooldownAlpha or 0.9)
@@ -1293,6 +1216,20 @@ local function RefreshBars()
                     and string.format("%dm%02d", math.floor(remain / 60), math.floor(remain % 60))
                     or string.format("%.1f", remain))
                 bar.timeText:SetTextColor(cfg.textColorR or 1, cfg.textColorG or 1, cfg.textColorB or 1, 1)
+
+                -- Result of the cast that put this on cooldown: green check
+                -- once UNIT_SPELLCAST_INTERRUPTED confirms it landed, red X
+                -- if MISS_CONFIRM_DELAY passed with no confirmation. Nothing
+                -- shown while still "pending" (just cast, not resolved yet).
+                if entry.kickResult == "hit" then
+                    bar.resultIcon:SetTexture("Interface\\RaidFrame\\ReadyCheck-Ready")
+                    bar.resultIcon:Show()
+                elseif entry.kickResult == "miss" then
+                    bar.resultIcon:SetTexture("Interface\\RaidFrame\\ReadyCheck-NotReady")
+                    bar.resultIcon:Show()
+                else
+                    bar.resultIcon:Hide()
+                end
             end
 
             bar:Show()
@@ -1601,15 +1538,11 @@ Hooks.onKickRegistryChanged = function() RefreshBars() end
 
 -------------------------------------------------------------------------------
 --  Runtime enable/disable -- registers/unregisters every event frame above
---  plus the correlation and redraw tickers. Zero cost unless the module is
---  opted into (cfg.enabled), matching every other Voidlol module.
+--  plus the redraw ticker. Zero cost unless the module is opted into
+--  (cfg.enabled), matching every other Voidlol module.
 -------------------------------------------------------------------------------
 local driver = CreateFrame("Frame", nil, UIParent)
 local elapsed = 0
-
-local function CorrelateOnUpdate()
-    if needsCorrelation then CorrelateSignals() end
-end
 
 local function DriverOnUpdate(_, delta)
     elapsed = elapsed + delta
@@ -1625,11 +1558,10 @@ local function EnableRuntime()
         partyFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "partypet" .. i)
     end
     npFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
-    npFrame:RegisterEvent("UNIT_AURA")
+    npFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
     rosterFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
     rosterFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     syncFrame:RegisterEvent("CHAT_MSG_ADDON")
-    corrFrame:SetScript("OnUpdate", CorrelateOnUpdate)
     elapsed = 0
     driver:SetScript("OnUpdate", DriverOnUpdate)
 end
@@ -1640,7 +1572,6 @@ local function DisableRuntime()
     npFrame:UnregisterAllEvents()
     rosterFrame:UnregisterAllEvents()
     syncFrame:UnregisterAllEvents()
-    corrFrame:SetScript("OnUpdate", nil)
     driver:SetScript("OnUpdate", nil)
 end
 
