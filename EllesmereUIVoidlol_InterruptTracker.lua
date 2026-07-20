@@ -1681,6 +1681,13 @@ function EVL.InterruptTracker_EnsurePreviewGroup(parent)
     return previewGroup.frame
 end
 
+-- Exposes the two persistent preview bar frames (each with .icon/.nameText/
+-- .timeText, same shape as a live bar) so EUI_Voidlol_Options.lua can attach
+-- click-to-navigate hit overlays directly to their sub-parts.
+function EVL.InterruptTracker_GetPreviewBars()
+    return previewGroup and previewGroup.bars
+end
+
 function EVL.InterruptTracker_RefreshPreviewGroup()
     if not previewGroup then return 0, 0 end
     local cfg = DB()

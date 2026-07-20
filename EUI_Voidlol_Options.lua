@@ -73,6 +73,13 @@ initFrame:SetScript("OnEvent", function(self)
     local healerManaHeaderBuilder
     local interruptTrackerPreviewHdr
     local interruptTrackerHeaderBuilder
+    -- Click-navigation state for the IT preview (hover a sub-part, click to
+    -- scroll to + flash its settings row). interruptTrackerClickTargets is
+    -- set once BuildInterruptTrackerPage has captured its section/row
+    -- widgets; interruptTrackerOverlaysBuilt guards against attaching twice.
+    -- See AttachInterruptTrackerPreviewOverlays below.
+    local interruptTrackerClickTargets
+    local interruptTrackerOverlaysBuilt = false
     -- Which page's header-preview currently owns the shared content-header
     -- frame. HealerMana/InterruptTracker/Castbar all reparent their sample
     -- bars into that one recycled `hdr` object via their own cached
@@ -330,6 +337,134 @@ initFrame:SetScript("OnEvent", function(self)
     healerManaPreviewHealFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
     healerManaPreviewHealFrame:SetScript("OnEvent", RefreshHealerManaPreview)
 
+    -- CLICK NAVIGATION for the IT preview -- hover a sub-part to highlight
+    -- it, click to scroll to and flash its settings row. Same pattern
+    -- EllesmereUIUnitFrames' preview uses (CreateHitOverlay / NavigateToSetting
+    -- / PlaySettingGlow); reimplemented here since that system is local to
+    -- that addon's options file, not exported.
+    local itGlowFrame
+    local function PlayInterruptTrackerGlow(targetFrame)
+        if not targetFrame then return end
+        if not itGlowFrame then
+            itGlowFrame = CreateFrame("Frame")
+            local c = EllesmereUI.ELLESMERE_GREEN
+            local function MkEdge()
+                local t = itGlowFrame:CreateTexture(nil, "OVERLAY", nil, 7)
+                t:SetColorTexture(c.r, c.g, c.b, 1)
+                return t
+            end
+            itGlowFrame._top = MkEdge()
+            itGlowFrame._bot = MkEdge()
+            itGlowFrame._lft = MkEdge()
+            itGlowFrame._rgt = MkEdge()
+            itGlowFrame._top:SetHeight(2)
+            itGlowFrame._top:SetPoint("TOPLEFT"); itGlowFrame._top:SetPoint("TOPRIGHT")
+            itGlowFrame._bot:SetHeight(2)
+            itGlowFrame._bot:SetPoint("BOTTOMLEFT"); itGlowFrame._bot:SetPoint("BOTTOMRIGHT")
+            itGlowFrame._lft:SetWidth(2)
+            itGlowFrame._lft:SetPoint("TOPLEFT", itGlowFrame._top, "BOTTOMLEFT")
+            itGlowFrame._lft:SetPoint("BOTTOMLEFT", itGlowFrame._bot, "TOPLEFT")
+            itGlowFrame._rgt:SetWidth(2)
+            itGlowFrame._rgt:SetPoint("TOPRIGHT", itGlowFrame._top, "BOTTOMRIGHT")
+            itGlowFrame._rgt:SetPoint("BOTTOMRIGHT", itGlowFrame._bot, "TOPRIGHT")
+        end
+        itGlowFrame:SetParent(targetFrame)
+        itGlowFrame:SetAllPoints(targetFrame)
+        itGlowFrame:SetFrameLevel(targetFrame:GetFrameLevel() + 5)
+        itGlowFrame:SetAlpha(1)
+        itGlowFrame:Show()
+        local elapsed = 0
+        itGlowFrame:SetScript("OnUpdate", function(self, dt)
+            elapsed = elapsed + dt
+            if elapsed >= 0.75 then
+                self:Hide(); self:SetScript("OnUpdate", nil); return
+            end
+            self:SetAlpha(1 - elapsed / 0.75)
+        end)
+    end
+
+    local function NavigateToInterruptTrackerSetting(key)
+        local m = interruptTrackerClickTargets and interruptTrackerClickTargets[key]
+        if not m or not m.section or not m.target then return end
+        local sf = EllesmereUI._scrollFrame
+        if not sf then return end
+        local _, _, _, _, headerY = m.section:GetPoint(1)
+        if not headerY then return end
+        local scrollPos = math.max(0, math.abs(headerY) - 40)
+        EllesmereUI.SmoothScrollTo(scrollPos)
+        local glowTarget = m.target
+        if m.slotSide then
+            local region = (m.slotSide == "left") and m.target._leftRegion or m.target._rightRegion
+            if region then glowTarget = region end
+        end
+        C_Timer.After(0.15, function() PlayInterruptTrackerGlow(glowTarget) end)
+    end
+
+    -- Hit overlay factory: an invisible button over `element` that
+    -- highlights on hover and navigates on click. Text elements size
+    -- themselves to the actual rendered text (not the whole row) via
+    -- GetStringWidth/Height.
+    local function CreateInterruptTrackerHitOverlay(element, mappingKey, isText, frameLevelOverride)
+        local anchor = isText and element:GetParent() or element
+        if not anchor.CreateTexture then anchor = anchor:GetParent() end
+        local btn = CreateFrame("Button", nil, anchor)
+        if isText then
+            local function ResizeToText()
+                local ok, tw, th = pcall(function()
+                    local w = element:GetStringWidth() or 0
+                    local hh = element:GetStringHeight() or 0
+                    if w < 4 then w = 4 end
+                    if hh < 4 then hh = 4 end
+                    return w, hh
+                end)
+                if not ok then tw = 40; th = 12 end
+                btn:SetSize(tw + 4, th + 4)
+            end
+            ResizeToText()
+            local justify = element:GetJustifyH()
+            if justify == "RIGHT" then btn:SetPoint("RIGHT", element, "RIGHT", 2, 0)
+            elseif justify == "CENTER" then btn:SetPoint("CENTER", element, "CENTER", 0, 0)
+            else btn:SetPoint("LEFT", element, "LEFT", -2, 0) end
+            btn:SetScript("OnShow", function() ResizeToText() end)
+        else
+            btn:SetAllPoints(element)
+        end
+        btn:SetFrameLevel(frameLevelOverride or (anchor:GetFrameLevel() + 20))
+        btn:RegisterForClicks("LeftButtonDown")
+        local c = EllesmereUI.ELLESMERE_GREEN
+        local brd = EllesmereUI.PP.CreateBorder(btn, c.r, c.g, c.b, 1, 2, "OVERLAY", 7)
+        brd:Hide()
+        btn:SetScript("OnEnter", function() brd:Show() end)
+        btn:SetScript("OnLeave", function() brd:Hide() end)
+        btn:SetScript("OnMouseDown", function() NavigateToInterruptTrackerSetting(mappingKey) end)
+        return btn
+    end
+
+    -- Attaches hit overlays to the preview's two sample bars, once BOTH the
+    -- click-target mapping (built by BuildInterruptTrackerPage) and the
+    -- preview bars (built by RefreshInterruptTrackerPreview) exist -- called
+    -- from both places, since which one runs first isn't guaranteed.
+    local function AttachInterruptTrackerPreviewOverlays()
+        if interruptTrackerOverlaysBuilt then return end
+        if not interruptTrackerClickTargets then return end
+        local previewBars = EVL.InterruptTracker_GetPreviewBars and EVL.InterruptTracker_GetPreviewBars()
+        if not (previewBars and previewBars[1] and previewBars[2]) then return end
+        interruptTrackerOverlaysBuilt = true
+
+        local readyBar, cooldownBar = previewBars[1], previewBars[2]
+        local readyLvl = readyBar:GetFrameLevel() + 20
+        CreateInterruptTrackerHitOverlay(readyBar, "readyBar", false, readyLvl)
+        if readyBar.icon then CreateInterruptTrackerHitOverlay(readyBar.icon, "icon", false, readyLvl) end
+        if readyBar.nameText then CreateInterruptTrackerHitOverlay(readyBar.nameText, "nameTextReady", true, readyLvl + 5) end
+        if readyBar.timeText then CreateInterruptTrackerHitOverlay(readyBar.timeText, "timeTextReady", true, readyLvl + 5) end
+
+        local cdLvl = cooldownBar:GetFrameLevel() + 20
+        CreateInterruptTrackerHitOverlay(cooldownBar, "cooldownBar", false, cdLvl)
+        if cooldownBar.icon then CreateInterruptTrackerHitOverlay(cooldownBar.icon, "icon", false, cdLvl) end
+        if cooldownBar.nameText then CreateInterruptTrackerHitOverlay(cooldownBar.nameText, "nameTextCooldown", true, cdLvl + 5) end
+        if cooldownBar.timeText then CreateInterruptTrackerHitOverlay(cooldownBar.timeText, "timeText", true, cdLvl + 5) end
+    end
+
     -- Two standalone sample bars (one ready, one on cooldown with a
     -- randomized hit/miss badge), independent of Enabled/group status, so
     -- the options page always shows a live preview of the current settings.
@@ -345,6 +480,7 @@ initFrame:SetScript("OnEvent", function(self)
         frame:ClearAllPoints()
         frame:SetPoint("TOP", hdr, "TOP", 0, -8)
         frame:Show()
+        AttachInterruptTrackerPreviewOverlays()
 
         return h + 16
     end
@@ -1457,6 +1593,12 @@ initFrame:SetScript("OnEvent", function(self)
         local barTexValues, barTexOrder = BuildBarTextureDropdownData()
         local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
 
+        -- Captured so the preview's click-to-navigate overlays (built at the
+        -- end of this function) can scroll to / glow the exact row.
+        local barAppearanceSection, iconPosRow, textColorRow
+        local stateColorsSection, readyColorRow, readyTextColorRow, cooldownColorRow
+        local nameColorSection, nameColorReadyRow, nameColorCooldownRow
+
         _, h = W:SectionHeader(parent, "GENERAL", y); y = y - h
 
         _, h = W:DualRow(parent, y,
@@ -1471,7 +1613,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "BAR APPEARANCE", y); y = y - h
+        barAppearanceSection, h = W:SectionHeader(parent, "BAR APPEARANCE", y); y = y - h
 
         _, h = W:DualRow(parent, y,
             { type="slider", text="Bar Width",
@@ -1512,7 +1654,7 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:DualRow(parent, y,
+        iconPosRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Icon Position",
               values = { left = "Left", right = "Right" },
               order  = { "left", "right" },
@@ -1583,7 +1725,7 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:DualRow(parent, y,
+        textColorRow, h = W:DualRow(parent, y,
             { type="colorpicker", text="Text Color",
               disabled=ITOff,
               getValue=function()
@@ -1615,9 +1757,9 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "COOLDOWN STATE COLORS", y); y = y - h
+        stateColorsSection, h = W:SectionHeader(parent, "COOLDOWN STATE COLORS", y); y = y - h
 
-        _, h = W:DualRow(parent, y,
+        readyColorRow, h = W:DualRow(parent, y,
             { type="toggle", text="Ready Uses Class Color",
               tooltip="When on, a ready bar is tinted with the tracked player's class color instead of the Ready Color below.",
               disabled=ITOff,
@@ -1642,7 +1784,7 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:DualRow(parent, y,
+        readyTextColorRow, h = W:DualRow(parent, y,
             { type="colorpicker", text="Ready Text Color",
               disabled=ITOff,
               getValue=function()
@@ -1657,7 +1799,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:DualRow(parent, y,
+        cooldownColorRow, h = W:DualRow(parent, y,
             { type="slider", text="On-Cooldown Color Darken",
               min = 0, max = 100, step = 1,
               tooltip="Multiplies the class color while on cooldown -- lower = darker.",
@@ -1715,9 +1857,9 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "NAME COLOR", y); y = y - h
+        nameColorSection, h = W:SectionHeader(parent, "NAME COLOR", y); y = y - h
 
-        _, h = W:DualRow(parent, y,
+        nameColorReadyRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Name Color (Ready)",
               values = { custom = "Custom Color", class = "Class Color" },
               order  = { "custom", "class" },
@@ -1741,7 +1883,7 @@ initFrame:SetScript("OnEvent", function(self)
               end })
         y = y - h
 
-        _, h = W:DualRow(parent, y,
+        nameColorCooldownRow, h = W:DualRow(parent, y,
             { type="dropdown", text="Name Color (On Cooldown)",
               values = { custom = "Custom Color", class = "Class Color" },
               order  = { "custom", "class" },
@@ -1853,6 +1995,23 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="label", text="" })
         y = y - h
+
+        -- Click-navigation targets for the preview above (see
+        -- AttachInterruptTrackerPreviewOverlays / NavigateToInterruptTrackerSetting,
+        -- defined near RefreshInterruptTrackerPreview). Stored in the outer
+        -- closure rather than on `parent`, since the overlays need to attach
+        -- as soon as BOTH this mapping AND the preview bars exist, and which
+        -- of the two is ready first isn't guaranteed.
+        interruptTrackerClickTargets = {
+            icon             = { section = barAppearanceSection, target = iconPosRow },
+            timeText         = { section = barAppearanceSection, target = textColorRow },
+            timeTextReady    = { section = stateColorsSection,   target = readyTextColorRow },
+            readyBar         = { section = stateColorsSection,   target = readyColorRow, slotSide = "right" },
+            cooldownBar      = { section = stateColorsSection,   target = cooldownColorRow },
+            nameTextReady    = { section = nameColorSection,     target = nameColorReadyRow },
+            nameTextCooldown = { section = nameColorSection,     target = nameColorCooldownRow },
+        }
+        AttachInterruptTrackerPreviewOverlays()
 
         return math.abs(y)
     end
