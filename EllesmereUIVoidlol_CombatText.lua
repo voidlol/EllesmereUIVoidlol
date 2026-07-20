@@ -220,7 +220,9 @@ local function ApplyRowStyle(row, key, amount, isCrit, schoolMask, specialText)
     if specialText then
         displayAmount = specialText
     elseif amount == 0 and key == "incomingDamage" then
-        displayAmount = "Absorb"
+        displayAmount = "ABSORB"
+    elseif type(amount) ~= "number" then
+        displayAmount = amount
     else
         displayAmount = (cfg.prefix or "") .. AbbreviateNumber(amount)
     end
@@ -424,6 +426,8 @@ local function OnUnitCombat(unit, action, flagText, amount, schoolMask)
         DisplayIncomingText("incomingDamage", amount, flagText == "CRITICAL", schoolMask)
     elseif action == "HEAL" and type(amount) == "number" then
         DisplayIncomingText("incomingHeal", amount, flagText == "CRITICAL")
+    else
+        DisplayIncomingText("incomingDamage", action, false, schoolMask)
     end
 end
 
