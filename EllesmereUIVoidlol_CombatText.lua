@@ -18,6 +18,10 @@ local TryHookUnlockFrame
 local unlockHooksInstalled = false
 local unlockRegistered = false
 local hasUnitCombat = false
+-- Declared here (not next to the rest of the test-button code below) so
+-- DisplayIncomingText can see it as an upvalue instead of resolving the
+-- forward reference to a global.
+local testActive = false
 
 local ROW_POOL_MAX = 24
 
@@ -267,7 +271,12 @@ end
 local function DisplayIncomingText(key, amount, isCrit, schoolMask, specialText)
     local cfg = DB(key)
     local anchorFrame = frames[key]
-    if not cfg or not anchorFrame or cfg.enabled == false or not IsModuleEnabled() then return end
+    if not cfg or not anchorFrame then return end
+    -- Start Test bypasses both Enabled gates so it always previews, even
+    -- before you've turned the feature on -- same reasoning as the preview
+    -- groups elsewhere in this addon (e.g. Healer Mana's options-page
+    -- preview). Real combat events still respect them normally.
+    if not testActive and (cfg.enabled == false or not IsModuleEnabled()) then return end
     if IsUnlockActive() then return end
 
     local row = AcquireRow(key)
@@ -526,27 +535,28 @@ end
 EVL.RegisterCombatTextUnlock = RegisterUnlock
 
 -------------------------------------------------------------------------------
---  Manual test: fakes one incoming-damage and one incoming-heal event per
---  second through the SAME DisplayIncomingText path real combat uses, so
+--  Manual test: fakes one incoming-damage and one incoming-heal event every
+--  0.5s through the SAME DisplayIncomingText path real combat uses, so
 --  what you see while testing is exactly what real combat will look like
 --  (same fonts/colors/animation/rows-limit/fade settings) -- not a separate
---  mock display. Respects the current Enabled toggles, same as real combat
---  would: a disabled frame stays hidden during the test.
+--  mock display. Bypasses the Enabled toggles (see DisplayIncomingText)
+--  so it always previews, even before the feature is turned on.
 -------------------------------------------------------------------------------
 local testTicker
-local testActive = false
 
 -- Physical, Holy, Fire, Nature, Frost, Shadow, Arcane (real WoW school-mask bits).
 local TEST_SCHOOL_MASKS = { 1, 2, 4, 8, 16, 32, 64 }
 
+-- Melee-avoidance outcomes: physical only, you can't miss/dodge/parry/block a spell.
+local TEST_PHYSICAL_SPECIALS = { "MISS", "DODGE", "PARRY", "BLOCK" }
+
 local function GenerateTestEvent()
     local roll = math.random()
-    if roll < 0.15 then
+    if roll < 0.12 then
         DisplayIncomingText("incomingDamage", 0, false, TEST_SCHOOL_MASKS[math.random(1, #TEST_SCHOOL_MASKS)]) -- Absorb (amount == 0), any school
-    elseif roll < 0.25 then
-        DisplayIncomingText("incomingDamage", 0, false, 1, "Dodge") -- Dodge/Parry: physical only, you can't dodge a spell
-    elseif roll < 0.35 then
-        DisplayIncomingText("incomingDamage", 0, false, 1, "Parry")
+    elseif roll < 0.40 then
+        local special = TEST_PHYSICAL_SPECIALS[math.random(1, #TEST_PHYSICAL_SPECIALS)]
+        DisplayIncomingText("incomingDamage", 0, false, 1, special)
     else
         DisplayIncomingText("incomingDamage", math.random(1000, 60000), math.random() < 0.2, TEST_SCHOOL_MASKS[math.random(1, #TEST_SCHOOL_MASKS)])
     end
@@ -567,8 +577,8 @@ function EVL.CombatText_ToggleTest()
         testActive = false
     else
         testActive = true
-        GenerateTestEvent() -- show one immediately instead of waiting a full second
-        testTicker = C_Timer.NewTicker(1, GenerateTestEvent)
+        GenerateTestEvent() -- show one immediately instead of waiting for the first tick
+        testTicker = C_Timer.NewTicker(0.5, GenerateTestEvent)
     end
     return testActive
 end
