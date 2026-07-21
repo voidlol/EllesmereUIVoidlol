@@ -253,6 +253,12 @@ end
 local function ApplyAll()
     local cfg = EVL.DB()
     if not cfg then return end
+    -- Interrupt Tracker: force-disabled, not reliable enough to ship right
+    -- now (see EUI_Voidlol_Options.lua's nav-list comment). Stomping the
+    -- saved flag here means it stays off even for a profile that had it
+    -- enabled before this was pulled, and EVL.ApplyInterruptTracker/
+    -- InitInterruptTracker are deliberately never called below.
+    if cfg.interruptTracker then cfg.interruptTracker.enabled = false end
     if EVL.ApplyQoL then EVL.ApplyQoL() end
     if EVL.ApplyTweaks then EVL.ApplyTweaks() end
     if EVL.ApplyStatusBar then EVL.ApplyStatusBar() end
@@ -260,7 +266,6 @@ local function ApplyAll()
     if EVL.ApplyCombatText then EVL.ApplyCombatText() end
     if EVL.ApplyCastbar then EVL.ApplyCastbar() end
     if EVL.ApplyHealerMana then EVL.ApplyHealerMana() end
-    if EVL.ApplyInterruptTracker then EVL.ApplyInterruptTracker() end
 end
 EVL.ApplyAll = ApplyAll
 _G._EVL_ApplyAll = ApplyAll
@@ -279,5 +284,4 @@ function EBS:OnEnable()
     ApplyAll()
     if EVL.InitCastbarHooks then EVL.InitCastbarHooks() end
     if EVL.InitHealerMana then EVL.InitHealerMana() end
-    if EVL.InitInterruptTracker then EVL.InitInterruptTracker() end
 end

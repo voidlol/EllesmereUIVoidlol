@@ -2459,7 +2459,11 @@ initFrame:SetScript("OnEvent", function(self)
         RegisterModuleExternal({
             title       = "Voidlol",
             description = description,
-            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA, PAGE_INTERRUPT_TRACKER },
+            -- PAGE_INTERRUPT_TRACKER deliberately excluded -- module force-
+            -- disabled (see EllesmereUIVoidlol.lua ApplyAll/OnEnable), not
+            -- reliable enough to expose right now. Left out of the nav list
+            -- rather than deleted so it's a one-line revert to bring back.
+            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
             buildPage   = function(pageName, parent, yOffset)
                 if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
                 if pageName == PAGE_TWEAKS       then return BuildTweaksPage(pageName, parent, yOffset) end

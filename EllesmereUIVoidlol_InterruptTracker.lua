@@ -6,18 +6,27 @@
 --  from a separate addon's IT_Database/IT_Core/InterruptTrack files).
 --
 --  Detection: your own kick-cast is read directly off UNIT_SPELLCAST_SUCCEEDED
---  (100% reliable). Party members' cast attempts are *inferred* (their
---  spellID is usually tainted) via ResolveInterruptSpell / the off-cooldown
---  fallback -- see HandlePartyCast. Whether that attempt actually LANDED is
---  no longer a timing guess: UNIT_SPELLCAST_INTERRUPTED / _CHANNEL_STOP
---  carry an extra `interruptedBy` GUID identifying who landed it. The raw
---  GUID is a secret value for anyone but yourself, but UnitTokenFromGUID
---  (resolves only for your OWN GUID) and UnitNameFromGUID/UnitClassFromGUID
---  (resolve even on a secret GUID -- "blessed" display-only resolvers) let
---  us read WHO without ever touching the GUID itself -- see CONFIRM HIT.
+--  (100% reliable, spellID isn't tainted for the local unit) -- see
+--  HandleOwnKick. Party members are REACTIVE ONLY: we never try to detect
+--  their cast attempt (that required laundering a tainted spellID off their
+--  UNIT_SPELLCAST_SUCCEEDED and guessing whether it was their kick vs any
+--  other ability -- an earlier version did this via ResolveInterruptSpell/
+--  HandlePartyCast/a taint-laundering slider hack, all removed). Instead a
+--  teammate's bar is created and its cooldown started the instant their
+--  interrupt is confirmed LANDED, via UNIT_SPELLCAST_INTERRUPTED/
+--  _CHANNEL_STOP's `interruptedBy` GUID -- see CONFIRM HIT. This mirrors how
+--  EXBoss's interrupt tracker handles teammates (reactive-only) and trades
+--  away "cooldown counting down before it's confirmed" for a much smaller,
+--  sturdier surface -- no tainted-spellID resolution, no extraKicks
+--  bookkeeping, one clear responsibility per event. The raw `interruptedBy`
+--  GUID is a secret value for anyone but yourself; UnitTokenFromGUID and
+--  UnitNameFromGUID/UnitClassFromGUID ("blessed" display-only resolvers) let
+--  us read WHO without ever touching the GUID itself, though their RETURN
+--  VALUE can itself still be secret and must be re-checked (see CONFIRM
+--  HIT) -- when it is, we just skip that hit, same limitation EXBoss has.
 --  If a party member also runs this addon, their own kick reading is
 --  broadcast over an addon message (chat type "PARTY") and overwrites the
---  local heuristic guess for that person -- see the SYNC section.
+--  local guess for that person -- see the SYNC section.
 --
 --  Deviations from the reference build:
 --   - Every user-facing tunable in the reference's local `S` settings table
@@ -154,7 +163,6 @@ local specialInterruptTalentDefinitions = {
 -- Built lookup tables from the raw database above.
 local ALL_INTERRUPTS         = {} -- [spellID] = { id, cd, name, class? }
 local ALL_INTERRUPTS_STR     = {} -- [tostring(spellID)] = same
-local ALL_INTERRUPTS_BY_NAME = {} -- [localizedSpellName] = same
 local SPELL_ALIASES          = {} -- [aliasID] = canonicalID
 local SPELL_ALIASES_STR      = {} -- [tostring(aliasID)] = canonicalID
 local CLASS_INTERRUPTS       = {} -- [classTag] = data
@@ -180,12 +188,6 @@ end
 for alias, target in pairs(aliases) do
     SPELL_ALIASES[alias] = target
     SPELL_ALIASES_STR[tostring(alias)] = target
-end
-for id, data in pairs(ALL_INTERRUPTS) do
-    local ok, name = pcall(C_Spell.GetSpellName, id)
-    if ok and name and name ~= "" then
-        ALL_INTERRUPTS_BY_NAME[name] = data
-    end
 end
 
 -------------------------------------------------------------------------------
@@ -250,8 +252,16 @@ end
 
 local function NormalizeName(name)
     if name == nil then return "Unknown" end
+    if issecretvalue and issecretvalue(name) then return "Unknown" end
     local ok, shortName = pcall(Ambiguate, name, "short")
-    return (ok and shortName) or "Unknown"
+    if not ok or not shortName then return "Unknown" end
+    -- Ambiguate doesn't strip secrecy -- a secret input can come back out
+    -- still secret with no pcall error, so it must be checked again here too
+    -- (not just on the raw input above) before this is ever used as a table
+    -- key (kickRegistry[name]), which errors: "attempted to index a table
+    -- that cannot be indexed with secret keys".
+    if issecretvalue and issecretvalue(shortName) then return "Unknown" end
+    return shortName
 end
 
 local function SafeUnitName(unit)
@@ -397,16 +407,14 @@ local Hooks = {}
 
 -------------------------------------------------------------------------------
 --  KICK REGISTRY
---  [name] = { spellID, baseCd, cdEnd, class, lastKickAt, extraKicks={} }
---  extraKicks holds secondary interrupt abilities some specs have alongside
---  their primary kick (tracked as their own mini-cooldown).
+--  [name] = { spellID, baseCd, cdEnd, class, lastKickAt, lastKickResult, missTimer }
 -------------------------------------------------------------------------------
 local kickRegistry    = {}
 local kickNoInterrupt = {} -- [name] = true (e.g. a healer spec with no kick)
 
 local function KickRegCreate(name)
     if not kickRegistry[name] then
-        kickRegistry[name] = { spellID = 0, baseCd = 15, cdEnd = 0, class = nil, extraKicks = {}, lastKickResult = nil, missTimer = nil }
+        kickRegistry[name] = { spellID = 0, baseCd = 15, cdEnd = 0, class = nil, lastKickResult = nil, missTimer = nil }
     end
     return kickRegistry[name]
 end
@@ -500,120 +508,6 @@ local function AutoRegisterParty()
     end
 end
 
--- Resolves a (possibly tainted) spellID off a party member's cast into one of
--- our known interrupt spells, trying name lookup first (untainted if
--- GetSpellName succeeds), then the various numeric-recovery paths.
-local function ResolveInterruptSpell(spellID)
-    local ok, spellName = pcall(C_Spell.GetSpellName, spellID)
-    local cleanName = (ok and spellName and not issecretvalue(spellName)) and spellName or nil
-    if cleanName then
-        local data = ALL_INTERRUPTS_BY_NAME[cleanName]
-        if data then return data, data.id, cleanName end
-    end
-
-    local ok2, baseID = pcall(C_Spell.GetBaseSpell, spellID)
-    local cleanID = (ok2 and baseID) or ResolveNumber(spellID) or nil
-    if cleanID then
-        local ok3, d = pcall(function() return ALL_INTERRUPTS[cleanID] end)
-        if ok3 and d then return d, cleanID, (cleanName or d.name) end
-        local ok4, aliasTarget = pcall(function() return SPELL_ALIASES[cleanID] end)
-        if ok4 and aliasTarget then
-            local ok5, d2 = pcall(function() return ALL_INTERRUPTS[aliasTarget] end)
-            if ok5 and d2 then return d2, aliasTarget, (cleanName or d2.name) end
-        end
-    end
-
-    local ok6, s = pcall(tostring, spellID)
-    if ok6 and s then
-        local ok7, d = pcall(function() return ALL_INTERRUPTS_STR[s] end)
-        if ok7 and d then return d, d.id, cleanName end
-        local ok8, aID = pcall(function() return SPELL_ALIASES_STR[s] end)
-        if ok8 and aID then
-            local ok9, d2 = pcall(function() return ALL_INTERRUPTS[aID] end)
-            if ok9 and d2 then return d2, aID, cleanName end
-        end
-    end
-    return nil, nil, cleanName
-end
-
--- Records a party member's kick and notifies the UI.
-local function HandlePartyCast(unit, spellID, memberName)
-    local now = GetTime()
-    local resolvedID = SPELL_ALIASES[spellID] or spellID
-    if resolvedID == 19647 then
-        local e = kickRegistry[memberName]
-        if e and e.spellID == 119914 then resolvedID = 132409 end
-    end
-
-    local entry = kickRegistry[memberName]
-    if not entry then
-        local spellData = ALL_INTERRUPTS[resolvedID]
-        if not spellData then return end
-        entry = KickRegCreate(memberName)
-        entry.class = spellData.class
-        entry.spellID = resolvedID
-        entry.baseCd = spellData.cd
-    end
-
-    local spellData = ALL_INTERRUPTS[resolvedID]
-    if not spellData then return end
-
-    local isExtra = false
-    for _, ek in ipairs(entry.extraKicks) do
-        if resolvedID == ek.spellID then
-            ek.cdEnd = now + ek.baseCd
-            isExtra = true
-            break
-        end
-    end
-
-    if not isExtra then
-        if entry.spellID and resolvedID ~= entry.spellID then
-            -- Secondary interrupt ability distinct from the tracked primary one
-            local found = false
-            for _, ek in ipairs(entry.extraKicks) do
-                if ek.spellID == resolvedID then
-                    ek.cdEnd = now + ek.baseCd
-                    found = true
-                    break
-                end
-            end
-            if not found then
-                entry.extraKicks[#entry.extraKicks + 1] = {
-                    spellID = resolvedID, baseCd = spellData.cd, cdEnd = now + spellData.cd, name = spellData.name,
-                }
-            end
-        else
-            -- Prefer entry.baseCd (per-member, spec-aware where resolvable)
-            -- over spellData.cd (the shared ALL_INTERRUPTS lookup). Several
-            -- specs share a canonical spellID with a DIFFERENT real cooldown
-            -- -- Wind Shear is 12s for most Shaman specs but 30s for
-            -- Restoration, both keyed under spellID 57994 -- and since
-            -- specOverrides is built into ALL_INTERRUPTS after classKicks,
-            -- ALL_INTERRUPTS[57994].cd is permanently 30 for the whole
-            -- session, regardless of which Shaman actually cast it. For an
-            -- uninspectable member (follower NPCs can't be CanInspect()'d),
-            -- entry.baseCd stays at the classKicks default -- 12s, correct
-            -- for the common case (most Shamans, including most followers,
-            -- aren't Restoration) -- which beats blindly trusting the
-            -- collided shared-table value. spellData.cd is only the
-            -- fallback for a brand new entry with no baseCd at all yet.
-            -- Whichever wins, baseCd and cdEnd are ALWAYS set from the same
-            -- `cd` so the bar's fill ratio and the countdown text can never
-            -- disagree with each other.
-            local cd = entry.baseCd or spellData.cd or 15
-            entry.baseCd = cd
-            entry.cdEnd = now + cd
-            entry.lastKickAt = now
-            SetKickPending(entry)
-        end
-    end
-
-    if Hooks.onKickDetected then
-        Hooks.onKickDetected(memberName, entry.spellID, entry.baseCd, entry.cdEnd)
-    end
-end
-
 -- Own player: spellID is read directly (not tainted for the local unit).
 local function HandleOwnKick(spellID)
     local now = GetTime()
@@ -676,14 +570,31 @@ local function FindPartyUnitByName(name)
     return nil
 end
 
+-- REACTIVE MODEL for party members (own kick tracking is unaffected --
+-- HandleOwnKick above still runs off UNIT_SPELLCAST_SUCCEEDED("player"),
+-- which was never the unreliable part). We no longer try to detect a party
+-- member's cast ATTEMPT at all (that required laundering a tainted spellID
+-- off their UNIT_SPELLCAST_SUCCEEDED and guessing whether it was their kick
+-- vs any other ability -- see the removed ResolveInterruptSpell/
+-- HandlePartyCast/taint-slider machinery). Instead, a teammate's bar is
+-- created and its cooldown STARTED right here, the instant their interrupt
+-- is confirmed landed -- there's no "pending"/"miss" state for teammates
+-- anymore, since we only ever observe a landed hit, never an attempt. This
+-- mirrors how EXBoss's interrupt tracker works (reactive-only for teammates)
+-- and trades away the "cooldown counting down before it's confirmed" nicety
+-- for a much smaller, sturdier surface: no tainted-spellID resolution, no
+-- extraKicks bookkeeping, one clear responsibility per event.
 local function ConfirmInterruptHit(interruptedBy)
     if interruptedBy == nil then return end
 
-    -- Resolves only for YOUR OWN GUID; nil for anyone else's (still-secret)
-    -- GUID. Our own kick is already reliably detected off UNIT_SPELLCAST_
-    -- SUCCEEDED("player") -- this just confirms that pending cast landed.
+    -- UnitTokenFromGUID does NOT return nil for a party member's landed
+    -- interrupt -- it returns a STILL-SECRET string token (truthy, non-nil,
+    -- but unusable). Comparing a secret value with == throws ("attempt to
+    -- compare ... a secret string value"), so issecretvalue MUST be checked
+    -- before the equality check ever runs -- only a non-secret token can
+    -- safely be compared to "player" at all.
     local okToken, token = pcall(UnitTokenFromGUID, interruptedBy)
-    if okToken and token then
+    if okToken and token and not (issecretvalue and issecretvalue(token)) and token == "player" then
         local myName = SafeUnitName("player")
         local myEntry = myName and kickRegistry[myName]
         if myEntry then
@@ -693,32 +604,37 @@ local function ConfirmInterruptHit(interruptedBy)
         return
     end
 
-    -- Not us -- UnitNameFromGUID resolves a display name even on a secret
-    -- GUID (a "blessed" resolver, like UnitTokenFromGUID above), without
-    -- ever touching the raw GUID value itself.
+    -- Not us -- UnitNameFromGUID is documented to resolve a display name
+    -- even on a secret GUID, but in practice (observed live, e.g. Mythic+)
+    -- it can still come back secret for a party member's GUID. When that
+    -- happens we simply can't attribute this hit to anyone -- same
+    -- limitation EXBoss's own interrupt tracker has (its AddInterruptRecord
+    -- returns false/"name_unresolved" in the same situation) -- so we skip
+    -- it rather than guess.
     local okName, rawName = pcall(UnitNameFromGUID, interruptedBy)
-    if not okName or not rawName then return end
+    if not okName or not rawName or (issecretvalue and issecretvalue(rawName)) then return end
     local name = NormalizeName(rawName)
 
     local entry = kickRegistry[name]
-    if not entry then
-        -- We never detected this member's cast attempt (fully opaque
-        -- spellID and they weren't registered yet) -- this hit confirmation
-        -- is the strongest signal we'll get, so register them now if we can
-        -- find their unit (for class/spec-based cooldown resolution).
+    if not entry or not entry.spellID or entry.spellID == 0 then
+        -- Not registered yet (or registered as "no addon data") -- this hit
+        -- confirmation is the strongest signal we'll get for them, so
+        -- register now from their class if we can find their unit.
         local u = FindPartyUnitByName(name)
-        if not u then return end
-        local _, cls = UnitClass(u)
+        local _, cls = u and UnitClass(u)
         local kick = cls and CLASS_INTERRUPTS[cls]
         if not kick then return end
         entry = KickRegCreate(name)
         entry.class = cls
         entry.spellID = kick.id
         entry.baseCd = kick.cd
-        entry.cdEnd = GetTime() + kick.cd
-        entry.lastKickAt = GetTime()
     end
 
+    -- Start (or restart) their cooldown from right now -- the moment their
+    -- interrupt is confirmed landed is the only moment we ever observe them.
+    local now = GetTime()
+    entry.cdEnd = now + entry.baseCd
+    entry.lastKickAt = now
     ConfirmKickHit(entry)
     if Hooks.onKickRegistryChanged then Hooks.onKickRegistryChanged() end
 end
@@ -760,38 +676,6 @@ playerFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
         local resolvedID = SPELL_ALIASES[spellID] or spellID
         if ALL_INTERRUPTS[resolvedID] then
             HandleOwnKick(resolvedID)
-        end
-    end
-end)
-
--- Party units: their own cast succeeding tells us WHO attempted a kick (not
--- whether it landed -- see CONFIRM HIT for that). spellID is usually tainted
--- for other units, so ResolveInterruptSpell tries a name-based lookup first
--- (works even on a tainted spellID); if that also fails, fall back to
--- whatever this member's registry currently says their interrupt is, if
--- it's off cooldown (a guess, same as the reference build's fallback).
-local partyFrame = CreateFrame("Frame", nil, UIParent); partyFrame:Hide()
-partyFrame:SetScript("OnEvent", function(_, _, unit, _, spellID)
-    if not unit then return end
-    local memberName
-    if unit:find("^partypet") then
-        local idx = unit:match("partypet(%d)")
-        memberName = idx and SafeUnitName("party" .. idx)
-    else
-        memberName = SafeUnitName(unit)
-    end
-    if not memberName then return end
-
-    local data = ResolveInterruptSpell(spellID)
-    if data then
-        HandlePartyCast(unit, data.id, memberName)
-    else
-        local entry = kickRegistry[memberName]
-        if entry and entry.spellID and entry.spellID > 0 then
-            local onCD = entry.cdEnd and entry.cdEnd > GetTime()
-            if not onCD then
-                HandlePartyCast(unit, entry.spellID, memberName)
-            end
         end
     end
 end)
@@ -1076,13 +960,6 @@ local function BuildDisplayList()
                 duration = reg.baseCd, endTime = reg.cdEnd or 0, noAddon = false,
                 kickResult = reg.lastKickResult,
             }
-            for _, ek in ipairs(reg.extraKicks) do
-                list[#list + 1] = {
-                    name = name, classTag = classTag, spellID = ek.spellID,
-                    duration = ek.baseCd, endTime = ek.cdEnd or 0, noAddon = false,
-                    kickResult = nil,
-                }
-            end
             return true
         end
         return false
@@ -1573,10 +1450,6 @@ end
 
 local function EnableRuntime()
     playerFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player", "pet")
-    for i = 1, 4 do
-        partyFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "party" .. i)
-        partyFrame:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "partypet" .. i)
-    end
     npFrame:RegisterEvent("UNIT_SPELLCAST_INTERRUPTED")
     npFrame:RegisterEvent("UNIT_SPELLCAST_CHANNEL_STOP")
     rosterFrame:RegisterEvent("GROUP_ROSTER_UPDATE")
@@ -1588,7 +1461,6 @@ end
 
 local function DisableRuntime()
     playerFrame:UnregisterAllEvents()
-    partyFrame:UnregisterAllEvents()
     npFrame:UnregisterAllEvents()
     rosterFrame:UnregisterAllEvents()
     syncFrame:UnregisterAllEvents()
