@@ -916,6 +916,17 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Segmented Blocks",
+              tooltip="Class Resource bar (combo points, runes, holy power, etc.) only. Renders each pip/rune as its own independently-bordered block with a small empty gap between them -- like the Dragonriding HUD's charge pips -- instead of one continuous bar with vertical separator lines between segments.",
+              getValue=function() local c = QoL(); return c and c.resourceBarBlockStyle or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.resourceBarBlockStyle = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
         _, h = W:SectionHeader(parent, "DEBUFFS", y); y = y - h
 
         local function NotDispellableColorOff() local c = QoL(); return not (c and c.debuffNotDispellableColor) end

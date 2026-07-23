@@ -19,6 +19,7 @@ local defaults = {
                 actualDragonridingVisibility = false,
                 suppressAutoPlayed = false,
                 runesSpecColored = false,
+                resourceBarBlockStyle = false,
 
                 debuffNotDispellableColor = false,
                 debuffNotDispellableColorR = 0.5,

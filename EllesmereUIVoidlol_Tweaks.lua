@@ -74,6 +74,167 @@ local function ApplyRunesSpecColor()
 end
 
 -------------------------------------------------------------------------------
+--  Resource Bar: Segmented Blocks
+--  EllesmereUIResourceBars renders the "secondary" class-resource bar (combo
+--  points, runes, holy power, etc.) as one continuous strip: every pip/rune
+--  is built with border size 0, while a single outer border
+--  (secondaryFrame._barBorder) wraps the whole bar and a single full-width
+--  background/gap-fill layer (secondaryFrame._barBg / ERB.ApplyGapFills)
+--  shows through the inter-pip gaps. The Dragonriding HUD's charge/Second
+--  Wind rows (EllesmereUIBlizzardSkin_DragonRiding.lua) do the opposite:
+--  each pip is its own independently-bordered block, separated by real
+--  empty space. This toggle reproduces that look: after every rebuild,
+--  give each pip/rune its own border (the bar's own configured border
+--  style, read via the same _G._ERB_ResolveSecondaryCfg() BuildBars itself
+--  uses, so per-spec overrides are respected) and hide the outer
+--  border/background so the gaps read as empty space instead of a filled
+--  seam.
+--
+--  EllesmereUIResourceBars' pip layout is rebuilt (BuildBars) not just from
+--  ERB:ApplyAll() but also directly from several event handlers inside that
+--  addon (spec change, zone change, shapeshift, max-power change) -- and
+--  BuildBars is file-local, so it can't be hooked directly from here.
+--  Instead this hooks ApplyAll for the common case (settings changes,
+--  login) and separately watches the same handful of events, re-applying
+--  next frame (C_Timer.After(0, ...)) once that out-of-band rebuild has
+--  finished. Known gap: a one-frame flash back to the default segmented
+--  look is possible on those paths; accepted trade-off for staying
+--  entirely inside this addon rather than editing ResourceBars' source.
+-------------------------------------------------------------------------------
+local function GetERB()
+    return EllesmereUI and EllesmereUI.Lite and EllesmereUI.Lite.GetAddon
+        and EllesmereUI.Lite.GetAddon("EllesmereUIResourceBars", true)
+end
+
+-- pip -> true while we've stamped it with a block-style border, so an "off"
+-- pass only ever touches pips this feature itself touched.
+local blockStylePips = setmetatable({}, { __mode = "k" })
+
+-- CreatePip()'s exact field/method signature (SetActive + ApplyBorder + a
+-- non-nil _idx) is the only reliable way to pick pip/rune frames back out of
+-- secondaryFrame:GetChildren() -- they're created anonymously (no global
+-- name), unlike the border/tick/text-overlay frames also parented there.
+local function IsResourcePip(child)
+    return type(child) == "table" and type(child.SetActive) == "function"
+        and type(child.ApplyBorder) == "function" and child._idx ~= nil
+end
+
+local function ApplyResourceBarBlockStyle()
+    local secondaryFrame = _G.ERB_SecondaryFrame
+    if not secondaryFrame then return end
+
+    local cfg = DB()
+    local on = cfg and cfg.resourceBarBlockStyle
+
+    if on then
+        local sp = _G._ERB_ResolveSecondaryCfg and _G._ERB_ResolveSecondaryCfg()
+        if not sp then return end
+        -- "Bar" type secondaries (Maelstrom Weapon, Devourer soul fragments,
+        -- etc.) have no pips at all -- pips/runeFrames just sit hidden. Only
+        -- switch the outer border/background off when we actually found a
+        -- shown pip/rune to take over that job; otherwise a bar-type
+        -- resource would be left with no border and no background at all.
+        local found = 0
+        for _, child in ipairs({ secondaryFrame:GetChildren() }) do
+            if IsResourcePip(child) and child:IsShown() then
+                child:ApplyBorder(sp.borderSize or 1, sp.borderR or 0, sp.borderG or 0,
+                    sp.borderB or 0, sp.borderA or 1, sp.borderTexture)
+                blockStylePips[child] = true
+                found = found + 1
+            end
+        end
+        if found > 0 then
+            if secondaryFrame._barBorder then secondaryFrame._barBorder:SetShown(false) end
+            if secondaryFrame._barBg then secondaryFrame._barBg:Hide() end
+            if secondaryFrame._gapFills then
+                for i = 1, #secondaryFrame._gapFills do secondaryFrame._gapFills[i]:Hide() end
+            end
+        end
+    else
+        for pip in pairs(blockStylePips) do
+            pip:ApplyBorder(0, 0, 0, 0, 0)
+        end
+        wipe(blockStylePips)
+        if secondaryFrame._barBorder then secondaryFrame._barBorder:SetShown(true) end
+        if secondaryFrame._barBg then secondaryFrame._barBg:Show() end
+        -- Gap-fill textures are left alone here -- ERB's own ApplyGapFills
+        -- already re-derives their correct shown/hidden state (it runs
+        -- unconditionally on every native rebuild); only the toggle-off
+        -- path below needs to force that once for an instant restore.
+    end
+end
+
+local erbHookInstalled = false
+local erbEventFrame
+
+local function EnsureERBHook()
+    if erbHookInstalled then return end
+    local erb = GetERB()
+    if not (erb and erb.ApplyAll) then return end
+    erbHookInstalled = true
+    hooksecurefunc(erb, "ApplyAll", ApplyResourceBarBlockStyle)
+end
+
+-- Mirrors the event set EllesmereUIResourceBars reacts to with its own
+-- out-of-band BuildBars() calls (see comment above). C_Timer.After(0, ...)
+-- runs next frame, after that rebuild has definitely finished regardless of
+-- frame event-dispatch ordering between the two addons.
+local function EnsureERBEventWatcher()
+    if erbEventFrame then return end
+    erbEventFrame = CreateFrame("Frame")
+    erbEventFrame:RegisterEvent("ACTIVE_TALENT_GROUP_CHANGED")
+    erbEventFrame:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED")
+    erbEventFrame:RegisterEvent("UPDATE_SHAPESHIFT_FORM")
+    erbEventFrame:RegisterUnitEvent("UNIT_MAXPOWER", "player")
+    erbEventFrame:RegisterUnitEvent("UNIT_MAXHEALTH", "player")
+    erbEventFrame:RegisterEvent("ZONE_CHANGED_NEW_AREA")
+    erbEventFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    erbEventFrame:SetScript("OnEvent", function()
+        local cfg = DB()
+        if not (cfg and cfg.resourceBarBlockStyle) then return end
+        C_Timer.After(0, ApplyResourceBarBlockStyle)
+    end)
+end
+
+-- The bar frame may not exist yet the first time the toggle is turned on
+-- (very early login timing, or ResourceBars loads after Voidlol); retry on
+-- the next loading-screen transition, matching the CDM mirror's same
+-- pattern above.
+local erbRetryFrame
+local function EnsureERBRetry()
+    if erbHookInstalled or erbRetryFrame then return end
+    erbRetryFrame = CreateFrame("Frame")
+    erbRetryFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    erbRetryFrame:SetScript("OnEvent", function(self)
+        EnsureERBHook()
+        if erbHookInstalled then self:UnregisterAllEvents() end
+    end)
+end
+
+local resourceBarBlockStyleWasOn = false
+
+local function ApplyResourceBarBlockStyleToggle()
+    EnsureERBEventWatcher()
+    EnsureERBHook()
+    if not erbHookInstalled then EnsureERBRetry() end
+
+    local cfg = DB()
+    local isOn = cfg and cfg.resourceBarBlockStyle or false
+    local wasOn = resourceBarBlockStyleWasOn
+    resourceBarBlockStyleWasOn = isOn
+
+    if isOn then
+        ApplyResourceBarBlockStyle()
+    elseif wasOn then
+        -- Turning off: force one native rebuild so the outer
+        -- border/background/gap-fills are restored exactly as ERB itself
+        -- would draw them, instead of hand-reproducing that logic here.
+        local erb = GetERB()
+        if erb and erb.ApplyAll then erb:ApplyAll() end
+    end
+end
+
+-------------------------------------------------------------------------------
 --  Debuff Border Color When Not Dispellable (Player & Target)
 --  EllesmereUIUnitFrames' own dispel-type debuff border feature colors a
 --  debuff icon's border by dispel type through each frame's
@@ -285,6 +446,7 @@ end
 
 function EVL.ApplyTweaks()
     ApplyRunesSpecColor()
+    ApplyResourceBarBlockStyleToggle()
     ApplyDebuffNotDispellableColor()
     ApplyMirrorCdmVisibility()
 end
