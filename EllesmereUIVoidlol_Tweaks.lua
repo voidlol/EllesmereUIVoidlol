@@ -235,57 +235,84 @@ local function ApplyResourceBarBlockStyleToggle()
 end
 
 -------------------------------------------------------------------------------
---  Debuff Border Color When Not Dispellable (Player & Target)
---  EllesmereUIUnitFrames' own dispel-type debuff border feature colors a
---  debuff icon's border by dispel type through each frame's
---  Debuffs.PostUpdateButton (a standard oUF Auras element hook) -- but for a
---  debuff that isn't dispellable (data.dispelName == nil) it restores a flat
---  black border. That coloring function is private to EllesmereUIUnitFrames'
---  own file-local namespace, so it can't be reached directly; instead this
---  wraps PostUpdateButton itself on the Player/Target Debuffs containers --
---  ordinary properties of frames we can reach by their known global names
---  (EllesmereUIUnitFrames_Player / _Target) -- calling the original first and
---  then recoloring the border to a custom color whenever it just went black
---  for that same "not dispellable" reason. Always safe to leave installed:
---  the recolor step itself no-ops unless the toggle below is on.
+--  Buffs: Independent Border Color (Player, Target, Focus, Pet, ToT, FoT, Boss)
+--  EllesmereUIUnitFrames is still pre-12.1 on the client this ships for, so
+--  auras render through the LEGACY path (CreateTargetAuras in
+--  EllesmereUIUnitFrames.lua), not the 12.1 AuraKit/AuraContainers system --
+--  an earlier version of this tweak targeted AuraKit and never had any
+--  effect for exactly that reason. On the legacy path, both
+--  frame.Buffs.PostUpdateButton and frame.Debuffs.PostUpdateButton call the
+--  SAME closure, ApplyLegacyAuraBorder(button), which paints button.Border
+--  from one shared setting (auraBorderR/G/B/A) -- no separate buff color,
+--  and no isBuff branch at all. This wraps frame.Buffs.PostUpdateButton (the
+--  same hook point the old, now-removed debuff tweak used on .Debuffs) and
+--  recolors button.Border to flat black afterward, leaving .Debuffs (and its
+--  own dispel-type recolor, ns.UF_ColorDebuffDispelBorder, which is only
+--  ever wired to .Debuffs) untouched.
+--
+--  ApplyLegacyAuraBorder change-guards its own repaint on a per-button
+--  generation stamp (button._euiABGen) that only advances on a REAL
+--  EllesmereUIUnitFrames settings change -- flipping our own toggle never
+--  bumps it, so a stale button would just keep whatever color it last had
+--  forever (in either direction: turning this off would leave it stuck
+--  black, since nothing else would ever repaint it back). Clearing
+--  button._euiABGen right before calling the original forces a full
+--  repaint from the CURRENT configured color every single time, so our
+--  override always starts from a correct base with no bookkeeping of our
+--  own needed. button._euiABGen is a plain field on a public Blizzard aura
+--  button frame, safe to poke from outside.
 -------------------------------------------------------------------------------
-local wrappedDebuffContainers = setmetatable({}, { __mode = "k" })
+local BUFF_FRAME_NAMES = {
+    "EllesmereUIUnitFrames_Player", "EllesmereUIUnitFrames_Target", "EllesmereUIUnitFrames_Focus",
+    "EllesmereUIUnitFrames_Pet", "EllesmereUIUnitFrames_TargetTarget", "EllesmereUIUnitFrames_FocusTarget",
+    "EllesmereUIUnitFrames_Boss1", "EllesmereUIUnitFrames_Boss2", "EllesmereUIUnitFrames_Boss3",
+    "EllesmereUIUnitFrames_Boss4", "EllesmereUIUnitFrames_Boss5",
+}
 
-local function ApplyNotDispellableBorderColor(button, data)
-    if not (data and data.dispelName == nil) then return end
+local wrappedBuffContainers = setmetatable({}, { __mode = "k" })
+
+local function ApplyBuffBorderColorToButton(button)
+    local cfg = DB()
+    if not (cfg and cfg.buffBorderBlack) then return end
     local border = button and button.Border
     if not border then return end
-    local cfg = DB()
-    if not (cfg and cfg.debuffNotDispellableColor) then return end
     local EUI = _G.EllesmereUI
     if not (EUI and EUI.PP and EUI.PP.SetBorderColor) then return end
-    EUI.PP.SetBorderColor(border,
-        cfg.debuffNotDispellableColorR or 0.5,
-        cfg.debuffNotDispellableColorG or 0.5,
-        cfg.debuffNotDispellableColorB or 0.5, 1)
+    EUI.PP.SetBorderColor(border, 0, 0, 0, 1)
 end
 
-local function HookDebuffContainer(debuffs)
-    if not debuffs or wrappedDebuffContainers[debuffs] then return end
-    wrappedDebuffContainers[debuffs] = true
-    local orig = debuffs.PostUpdateButton
-    debuffs.PostUpdateButton = function(element, button, unit, data)
-        if orig then orig(element, button, unit, data) end
-        ApplyNotDispellableBorderColor(button, data)
+local function HookBuffContainer(buffs)
+    if not buffs or wrappedBuffContainers[buffs] then return end
+    wrappedBuffContainers[buffs] = true
+    local orig = buffs.PostUpdateButton
+    buffs.PostUpdateButton = function(element, button, ...)
+        if button then button._euiABGen = nil end
+        if orig then orig(element, button, ...) end
+        ApplyBuffBorderColorToButton(button)
     end
 end
 
-local function HookDebuffContainers()
-    local p = _G.EllesmereUIUnitFrames_Player
-    local t = _G.EllesmereUIUnitFrames_Target
-    if p then HookDebuffContainer(p.Debuffs) end
-    if t then HookDebuffContainer(t.Debuffs) end
+local function HookBuffContainers()
+    for i = 1, #BUFF_FRAME_NAMES do
+        local f = _G[BUFF_FRAME_NAMES[i]]
+        if f and f.Buffs then HookBuffContainer(f.Buffs) end
+    end
 end
 
--- Defensive re-hook: if EllesmereUIUnitFrames ever rebuilds a Debuffs
--- container from scratch (settings change, profile swap), catch it via its
--- exposed global reload hook rather than assuming the frame object is
--- permanent for the whole session.
+-- Forces every already-hooked container to re-run PostUpdateButton for its
+-- current buttons right now (oUF Auras element convention), so a toggle
+-- flipped mid-session repaints immediately instead of waiting for the next
+-- natural aura update.
+local function ForceRefreshHookedBuffContainers()
+    for buffs in pairs(wrappedBuffContainers) do
+        if buffs.ForceUpdate then buffs:ForceUpdate() end
+    end
+end
+
+-- Defensive re-hook: if EllesmereUIUnitFrames ever rebuilds a Buffs
+-- container from scratch (settings change, profile swap), frame.Buffs
+-- becomes a brand-new object (CreateTargetAuras always creates one fresh),
+-- so catch it via the addon's exposed global reload hook.
 local reloadHooked = false
 local function EnsureReloadFramesHook()
     if reloadHooked or not _G._EUF_ReloadFrames then return end
@@ -293,13 +320,140 @@ local function EnsureReloadFramesHook()
     local orig = _G._EUF_ReloadFrames
     _G._EUF_ReloadFrames = function(...)
         orig(...)
-        HookDebuffContainers()
+        HookBuffContainers()
+        ForceRefreshHookedBuffContainers()
     end
 end
 
-local function ApplyDebuffNotDispellableColor()
-    HookDebuffContainers()
+-- Frames may not exist yet the very first time this runs (Voidlol's own
+-- OnEnable racing EllesmereUIUnitFrames' own frame construction); retry on
+-- the next loading-screen transition, matching this file's other retry
+-- patterns (EnsureERBRetry, EnsureMirrorRetry).
+local retryFrame
+local function EnsureBuffBorderRetry()
+    if retryFrame then return end
+    retryFrame = CreateFrame("Frame")
+    retryFrame:RegisterEvent("PLAYER_ENTERING_WORLD")
+    retryFrame:SetScript("OnEvent", function()
+        HookBuffContainers()
+        ForceRefreshHookedBuffContainers()
+    end)
+end
+
+-------------------------------------------------------------------------------
+--  Buffs: Independent Border Color -- 12.1 path
+--  On 12.1, EllesmereUIUnitFrames migrates aura rendering to
+--  EllesmereUI.AuraKit/AuraContainers (EUI_UnitFrames_AuraContainers.lua) and
+--  frame.Buffs stops existing, so the legacy hook above has nothing left to
+--  grab. Untested (no 12.1 client to run this against yet), written from
+--  reading AuraKit's source alongside the legacy path above -- fix forward
+--  if it turns out wrong once 12.1 actually ships.
+--
+--  BuildStyle (in EUI_UnitFrames_AuraContainers.lua) builds one style table
+--  per unit+polarity and registers it into EllesmereUI.AuraKit.styles, keyed
+--  "uf:<unit>:<HELPFUL|HARMFUL>". Both HELPFUL (buff) and HARMFUL (debuff)
+--  styles share the same single border color (auraBorderR/G/B/A) -- same
+--  bug as the legacy path, just a different mechanism.
+--
+--  style.applyExtra(button, d, style) is AuraKit's own per-button hook
+--  (ApplyStyleToRegions calls it right after painting the button's border
+--  from style.border, both at button creation AND on every restyle), and `d`
+--  is the per-button state table that carries d.borderHost -- the actual
+--  border frame -- so wrapping applyExtra gives a hook point at exactly the
+--  right moment, with the same PP-based border host the legacy path paints,
+--  without needing any private AuraKit internals.
+--
+--  Getting styles in the first place needs the same permanently-empty proxy
+--  trick as the (removed) first attempt at this feature, for the same
+--  reason: AK.styles only gets a fresh WRITE when BuildStyle's own settings
+--  fingerprint changes, and a metatable's __newindex only fires for keys a
+--  table doesn't already hold -- so this still parks a proxy in
+--  AuraKit.styles's place to catch every write, first or hundredth. Unlike
+--  that attempt, this only WRAPS style.applyExtra once (marked via
+--  style._evlBuffBorderHooked) rather than mutating style.border -- the
+--  wrap survives on that same table object even through fingerprint-skipped
+--  passes that never call AK.styles[key]=... again, so no separate
+--  reapply-on-toggle plumbing is needed: applyExtra reads DB() live every
+--  time it runs. AK.RestyleSoon(key) (AuraKit's own public repaint queue) is
+--  called once here to catch styles already sitting in AK.styles before the
+--  toggle changed and force an immediate repaint through the now-wrapped
+--  applyExtra, exactly mirroring ForceRefreshHookedBuffContainers's role in
+--  the legacy path above.
+-------------------------------------------------------------------------------
+local BUFF_STYLE_PATTERN = "^uf:.-:HELPFUL$"
+
+local function HookBuffStyleApplyExtra(style)
+    if not style or style._evlBuffBorderHooked then return end
+    style._evlBuffBorderHooked = true
+    local orig = style.applyExtra
+    style.applyExtra = function(button, d, st)
+        if orig then orig(button, d, st) end
+        local cfg = DB()
+        if not (cfg and cfg.buffBorderBlack) then return end
+        local b = st.border
+        local EUI = _G.EllesmereUI
+        if not (b and d.borderHost and EUI and EUI.ApplySecretSafeBorderStyle) then return end
+        EUI.ApplySecretSafeBorderStyle(d.borderHost, d, b.size or 1, 0, 0, 0, 1,
+            b.texture or "solid", b.offsetX, b.offsetY, b.shiftX, b.shiftY,
+            "unitframes", b.size or 1)
+    end
+end
+
+local buffStyleProxyInstalled = false
+local buffStylesReal -- the real backing table our proxy writes through to
+
+local function InstallBuffStyleProxy()
+    if buffStyleProxyInstalled then return end
+    local EUI = _G.EllesmereUI
+    local AK = EUI and EUI.AuraKit
+    if not (AK and AK.styles) then return end
+    buffStyleProxyInstalled = true
+
+    buffStylesReal = AK.styles
+    AK.styles = setmetatable({}, {
+        __index = buffStylesReal,
+        __newindex = function(_, key, style)
+            if type(key) == "string" and type(style) == "table" and key:match(BUFF_STYLE_PATTERN) then
+                HookBuffStyleApplyExtra(style)
+            end
+            rawset(buffStylesReal, key, style)
+        end,
+    })
+end
+
+local function ForceRestyleBuffStyles()
+    local EUI = _G.EllesmereUI
+    local AK = EUI and EUI.AuraKit
+    if not (AK and buffStylesReal) then return end
+    for key, style in pairs(buffStylesReal) do
+        if type(key) == "string" and type(style) == "table" and key:match(BUFF_STYLE_PATTERN) then
+            HookBuffStyleApplyExtra(style)
+            AK.RestyleSoon(key)
+        end
+    end
+end
+
+local function Apply121BuffBorderColor()
+    InstallBuffStyleProxy()
+    ForceRestyleBuffStyles()
+end
+
+-------------------------------------------------------------------------------
+-- EllesmereUI.IS_121 is the exact build-number flag EllesmereUI itself gates
+-- its own 12.1-only code on (EllesmereUI_Lite.lua:
+-- (select(4, GetBuildInfo()) or 0) >= 120100) -- reused here to pick whichever
+-- of the two mechanisms above actually applies on the running client.
+-------------------------------------------------------------------------------
+local function ApplyBuffBorderColor()
+    local EUI = _G.EllesmereUI
+    if EUI and EUI.IS_121 then
+        Apply121BuffBorderColor()
+        return
+    end
+    HookBuffContainers()
     EnsureReloadFramesHook()
+    EnsureBuffBorderRetry()
+    ForceRefreshHookedBuffContainers()
 end
 
 -------------------------------------------------------------------------------
@@ -447,6 +601,6 @@ end
 function EVL.ApplyTweaks()
     ApplyRunesSpecColor()
     ApplyResourceBarBlockStyleToggle()
-    ApplyDebuffNotDispellableColor()
+    ApplyBuffBorderColor()
     ApplyMirrorCdmVisibility()
 end

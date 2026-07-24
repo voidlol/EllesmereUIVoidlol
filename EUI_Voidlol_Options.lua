@@ -927,32 +927,17 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
-        _, h = W:SectionHeader(parent, "DEBUFFS", y); y = y - h
-
-        local function NotDispellableColorOff() local c = QoL(); return not (c and c.debuffNotDispellableColor) end
+        _, h = W:SectionHeader(parent, "BUFFS", y); y = y - h
 
         _, h = W:DualRow(parent, y,
-            { type="toggle", text="Debuff Border Color When Not Dispellable",
-              tooltip="Player & Target frames. EllesmereUIUnitFrames' Dispel-Type Debuff Border colors a debuff's border by dispel type, but leaves it black when the debuff isn't dispellable. This recolors that black border to a custom color instead.",
-              getValue=function() local c = QoL(); return c and c.debuffNotDispellableColor or false end,
+            { type="toggle", text="Buffs Ignore Border Color",
+              tooltip="Player, Target, Focus, Pet, ToT/FoT and Boss frames. EllesmereUIUnitFrames' \"Border Color\" setting colors both buffs and debuffs with the same swatch -- there's no separate buff option. This forces buffs to a flat black border instead, regardless of that setting, so only debuffs use your configured color. The engine's own dispel-type ring (shown on dispellable auras) is untouched either way. Works both pre-12.1 and on 12.1's aura-container system.",
+              getValue=function() local c = QoL(); return c and c.buffBorderBlack or false end,
               setValue=function(v)
-                  local c = QoL(); if c then c.debuffNotDispellableColor = v end
+                  local c = QoL(); if c then c.buffBorderBlack = v end
                   RefreshAll()
-                  RefreshWidgets()
               end },
-            { type="colorpicker", text="Border Color",
-              disabled=function() return NotDispellableColorOff() end,
-              getValue=function()
-                  local c = QoL()
-                  return (c and c.debuffNotDispellableColorR or 0.5),
-                         (c and c.debuffNotDispellableColorG or 0.5),
-                         (c and c.debuffNotDispellableColorB or 0.5)
-              end,
-              setValue=function(r, g, b)
-                  local c = QoL()
-                  if c then c.debuffNotDispellableColorR = r; c.debuffNotDispellableColorG = g; c.debuffNotDispellableColorB = b end
-                  RefreshAll()
-              end })
+            { type="label", text="" })
         y = y - h
 
         _, h = W:SectionHeader(parent, "COOLDOWN MANAGER", y); y = y - h
