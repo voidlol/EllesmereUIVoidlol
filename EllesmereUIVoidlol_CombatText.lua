@@ -81,6 +81,15 @@ local function IsUnlockActive()
     return EllesmereUI and EllesmereUI.IsUnlockModeActive and EllesmereUI.IsUnlockModeActive()
 end
 
+-- True while this frame is anchor-linked to another element via Unlock Mode.
+-- Keyed by the element's unlockKey (the key the anchor DB is stored under),
+-- not our internal frame key.
+local function IsUnlockAnchored(key)
+    local def = FRAME_DEF_BY_KEY[key]
+    return def ~= nil and EllesmereUI and EllesmereUI.IsUnlockAnchored
+        and EllesmereUI.IsUnlockAnchored(def.unlockKey) or false
+end
+
 -- Master switch, separate from the per-frame (Incoming Damage / Incoming Heal)
 -- enabled flags -- both gates must pass for a frame to show.
 local function IsModuleEnabled()
@@ -352,6 +361,13 @@ local function ApplyPosition(key)
     local cfg = DB(key)
     local f = GetFrame(key)
     if not f or not cfg then return end
+    -- When this frame is anchor-linked to another element in Unlock Mode, the
+    -- unlock anchor system owns its position and repositions it live as the
+    -- target moves. Re-applying our own UIParent-relative position here would
+    -- snap it off the anchor on every refresh (unlock open/close via ApplyAll,
+    -- options change), so leave it alone -- mirrors EllesmereUI's own modules
+    -- (e.g. Mythic+ Timer) which skip their absolute apply while anchored.
+    if IsUnlockAnchored(key) then return end
     f:ClearAllPoints()
     if cfg.pos then
         f:SetPoint("CENTER", UIParent, "CENTER", cfg.pos.centerX, cfg.pos.centerY)
