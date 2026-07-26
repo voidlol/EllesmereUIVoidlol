@@ -50,6 +50,18 @@ local CONTAINER_DEFS = {
     { key = "raid",  unlockKey = "EVL_HealerMana_Raid",  label = "Healer Mana (Raid)" },
 }
 
+local DEF_BY_KEY = {}
+for _, def in ipairs(CONTAINER_DEFS) do DEF_BY_KEY[def.key] = def end
+
+-- True while this container is anchor-linked to another element via Unlock
+-- Mode. Keyed by the element's unlockKey (the key the anchor DB is stored
+-- under), not our internal container key.
+local function IsUnlockAnchored(key)
+    local def = DEF_BY_KEY[key]
+    return def ~= nil and EllesmereUI and EllesmereUI.IsUnlockAnchored
+        and EllesmereUI.IsUnlockAnchored(def.unlockKey) or false
+end
+
 local containers   = {}                         -- key -> anchor frame (lazy)
 local rowPools     = { party = {}, raid = {} }   -- key -> pooled row frames
 local activeRows   = { party = {}, raid = {} }   -- key -> active row frames, index-aligned to currentHealers[key]
@@ -332,6 +344,13 @@ ApplyPosition = function(key)
     local cfg = FrameDB(key)
     local container = containers[key]
     if not cfg or not container then return end
+    -- When this container is anchor-linked to another element in Unlock Mode,
+    -- the unlock anchor system owns its position and repositions it live as the
+    -- target moves. Re-applying our own UIParent-relative position here would
+    -- snap it off the anchor on every refresh (roster update, options change,
+    -- unlock open/close), so leave it alone -- mirrors EllesmereUI's own modules
+    -- (e.g. Mythic+ Timer) which skip their absolute apply while anchored.
+    if IsUnlockAnchored(key) then return end
 
     local fes = container:GetEffectiveScale() or 1
     local ues = UIParent:GetEffectiveScale() or 1
