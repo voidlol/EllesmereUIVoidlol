@@ -4,7 +4,7 @@
 ## Group: EllesmereUI
 ## Notes: Custom module for personal features and settings.
 ## Author: Ellesmere
-## Version: 2.1.2
+## Version: 2.1.3
 ## Dependencies: EllesmereUI, EllesmereUIUnitFrames
 ## OptionalDeps: EllesmereUICooldownManager
 ## SavedVariables: EllesmereUIVoidlolDB
