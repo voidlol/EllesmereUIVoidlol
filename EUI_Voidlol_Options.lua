@@ -28,13 +28,20 @@ local PAGE_COMBAT_TEXT      = "Combat Text"
 local PAGE_CASTBAR          = "Target Castbar"
 local PAGE_HEALER_MANA      = "Healer Mana"
 local PAGE_INTERRUPT_TRACKER = "Interrupt Tracker"
+local PAGE_IMPORT_EXPORT    = "Import/Export"
 
 local initFrame = CreateFrame("Frame")
 initFrame:RegisterEvent("PLAYER_LOGIN")
 initFrame:SetScript("OnEvent", function(self)
     self:UnregisterEvent("PLAYER_LOGIN")
 
-    if not EllesmereUI or not EllesmereUI.Widgets then return end
+    -- EllesmereUIOptions (which defines EllesmereUI.Widgets) is LoadOnDemand --
+    -- it isn't loaded yet at PLAYER_LOGIN, only once the options panel is
+    -- actually opened. Registration itself only needs RegisterModule, which
+    -- lives in the always-loaded EllesmereUI.lua; buildPage (which does need
+    -- Widgets) only runs once the panel is open, by which point EllesmereUIOptions
+    -- has been pulled in on demand.
+    if not EllesmereUI or not EllesmereUI.RegisterModule then return end
 
     ---------------------------------------------------------------------------
     --  DB helpers
@@ -951,6 +958,29 @@ initFrame:SetScript("OnEvent", function(self)
                   RefreshAll()
               end },
             { type="label", text="" })
+        y = y - h
+
+        return math.abs(y)
+    end
+
+    ---------------------------------------------------------------------------
+    --  Import/Export page -- settings exchange (EllesmereUIVoidlol_ImportExport.lua)
+    ---------------------------------------------------------------------------
+    local function BuildImportExportPage(pageName, parent, yOffset)
+        local W = EllesmereUI.Widgets
+        local y = yOffset
+        local h
+
+        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        parent._showRowDivider = true
+
+        _, h = W:SectionHeader(parent, "SETTINGS", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="button", text="Export...", width=150,
+              onClick=function() if EVL.ShowExportFlow then EVL.ShowExportFlow() end end },
+            { type="button", text="Import...", width=150,
+              onClick=function() if EVL.ShowImportFlow then EVL.ShowImportFlow() end end })
         y = y - h
 
         return math.abs(y)
@@ -2459,7 +2489,7 @@ initFrame:SetScript("OnEvent", function(self)
             -- disabled (see EllesmereUIVoidlol.lua ApplyAll/OnEnable), not
             -- reliable enough to expose right now. Left out of the nav list
             -- rather than deleted so it's a one-line revert to bring back.
-            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA },
+            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA, PAGE_IMPORT_EXPORT },
             buildPage   = function(pageName, parent, yOffset)
                 if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
                 if pageName == PAGE_TWEAKS       then return BuildTweaksPage(pageName, parent, yOffset) end
@@ -2468,6 +2498,7 @@ initFrame:SetScript("OnEvent", function(self)
                 if pageName == PAGE_CASTBAR      then return BuildCastbarPage(pageName, parent, yOffset) end
                 if pageName == PAGE_HEALER_MANA  then return BuildHealerManaPage(pageName, parent, yOffset) end
                 if pageName == PAGE_INTERRUPT_TRACKER then return BuildInterruptTrackerPage(pageName, parent, yOffset) end
+                if pageName == PAGE_IMPORT_EXPORT then return BuildImportExportPage(pageName, parent, yOffset) end
             end,
             getHeaderBuilder = function(pageName)
                 if pageName == PAGE_CASTBAR then

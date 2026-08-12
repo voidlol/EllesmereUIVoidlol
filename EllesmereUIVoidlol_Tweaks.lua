@@ -439,14 +439,18 @@ local function Apply121BuffBorderColor()
 end
 
 -------------------------------------------------------------------------------
--- EllesmereUI.IS_121 is the exact build-number flag EllesmereUI itself gates
--- its own 12.1-only code on (EllesmereUI_Lite.lua:
--- (select(4, GetBuildInfo()) or 0) >= 120100) -- reused here to pick whichever
--- of the two mechanisms above actually applies on the running client.
+-- No EllesmereUI.IS_121-style build flag actually exists on the shipped
+-- addon (checked -- it's nowhere in EllesmereUI.lua/EllesmereUI_Lite.lua), so
+-- gating on it always fell through to the legacy path below, whose hook
+-- target (frame.Buffs) no longer exists once EllesmereUIUnitFrames renders
+-- through AuraKit -- silently doing nothing. EllesmereUI.AuraKit itself is a
+-- real, always-present table once EllesmereUI is loaded (EllesmereUI's own
+-- pre-12.1 ClientGate failsafe means only 12.1+ clients ever get this far
+-- anyway), so its presence is what actually distinguishes the two paths.
 -------------------------------------------------------------------------------
 local function ApplyBuffBorderColor()
     local EUI = _G.EllesmereUI
-    if EUI and EUI.IS_121 then
+    if EUI and EUI.AuraKit then
         Apply121BuffBorderColor()
         return
     end

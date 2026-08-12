@@ -1,4 +1,4 @@
-## Interface: 120000, 120001, 120005, 120007
+## Interface: 120000, 120001, 120005, 120007, 120100
 ## Title: |cff0cd29fEllesmereUI|r Voidlol
 ## Category: |cff0cd29fEllesmere|rUI
 ## Group: EllesmereUI
@@ -9,6 +9,9 @@
 ## OptionalDeps: EllesmereUICooldownManager
 ## SavedVariables: EllesmereUIVoidlolDB
 ## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
+
+# Libraries
+Libs\LibEUIExport-1.0\LibEUIExport-1.0.lua
 
 # Main Lua
 EUI_Voidlol_SharedMedia.lua
@@ -21,6 +24,7 @@ EllesmereUIVoidlol_CombatText.lua
 EllesmereUIVoidlol_Castbar.lua
 EllesmereUIVoidlol_HealerMana.lua
 EllesmereUIVoidlol_InterruptTracker.lua
+EllesmereUIVoidlol_ImportExport.lua
 
 # Options
 EUI_Voidlol_Options.lua
