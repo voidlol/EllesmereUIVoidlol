@@ -602,9 +602,193 @@ local function ApplyMirrorCdmVisibility()
     ApplyTBBVisibilityMirror()
 end
 
+-------------------------------------------------------------------------------
+--  Nameplates: Custom Friendly Raid Marker Size
+--  EllesmereUINameplates sizes a friendly plate's raid target marker off the
+--  shared icon-"slot" size for whatever position it's assigned to (top/left/
+--  right/topleft/topright) -- the SAME size used by debuff/buff/CC icons
+--  parked in that slot (GetRaidMarkerSize in EllesmereUINameplates.lua:1012
+--  reads p[pos.."SlotSize"]) -- so there's no size dedicated to the marker
+--  alone. FriendlyFrame:UpdateRaidIcon() (EllesmereUINameplatesFriendly.lua)
+--  is the one place that sizes+shows it: SetRaidTargetIconTexture then
+--  raidFrame:SetSize(sz, sz). This overrides just that size, on friendly
+--  plates only, right after the native call finishes each time. self.raid
+--  (the actual icon texture) is anchored TOPLEFT/BOTTOMRIGHT to raidFrame
+--  with a 1px inset, so it stretches to match automatically -- nothing else
+--  needs touching.
+--
+--  FriendlyFrame itself is a file-local mixin table (never exposed), so
+--  there's no single prototype to hook; Mixin(plate, FriendlyFrame) copies
+--  UpdateRaidIcon onto each PLATE as a real per-table field instead, which
+--  hooksecurefunc can target per-plate. EllesmereUINameplates registers its
+--  private ns on EllesmereUI._ModuleNS["EllesmereUINameplates"]
+--  (EllesmereUINameplates.lua:4) specifically so other addons can reach in
+--  like this; ns.friendlyPlates ([unit]=plate) is its live plate registry.
+--
+--  Plates are drawn from a pool (Acquire/Release) and Mixin only ever runs
+--  once per physical frame (plate._mixedIn), so each frame only needs
+--  hooking once -- hookedRaidIconPlates (weak-keyed) tracks that. New plates
+--  are caught by sweeping ns.friendlyPlates off our OWN NAME_PLATE_UNIT_ADDED
+--  watcher (deferred one frame so the parent addon's own handler -- which is
+--  what actually populates friendlyPlates -- has definitely already run)
+--  rather than wrapping ns.TryAddFriendlyPlate: a few of that function's own
+--  call sites inside EllesmereUINameplatesFriendly.lua invoke the file-local
+--  version directly, which would bypass a wrap on the exported ns field.
+-------------------------------------------------------------------------------
+local function GetNameplatesNS()
+    local EUI = _G.EllesmereUI
+    return EUI and EUI._ModuleNS and EUI._ModuleNS["EllesmereUINameplates"]
+end
+
+local hookedRaidIconPlates = setmetatable({}, { __mode = "k" })
+
+local function ApplyFriendlyRaidMarkerSize(self)
+    local cfg = DB()
+    if not (cfg and cfg.friendlyRaidMarkerSizeEnabled) then return end
+    local raidFrame = self.raidFrame
+    if not (raidFrame and raidFrame:IsShown()) then return end
+    local sz = cfg.friendlyRaidMarkerSize or 24
+    raidFrame:SetSize(sz, sz)
+end
+
+local function SweepFriendlyRaidIconPlates()
+    local npNS = GetNameplatesNS()
+    local plates = npNS and npNS.friendlyPlates
+    if not plates then return end
+    for _, plate in pairs(plates) do
+        if plate.UpdateRaidIcon and not hookedRaidIconPlates[plate] then
+            hookedRaidIconPlates[plate] = true
+            hooksecurefunc(plate, "UpdateRaidIcon", ApplyFriendlyRaidMarkerSize)
+        end
+    end
+end
+
+-- Forces every already-hooked plate to redraw its raid icon right now, so a
+-- toggle/slider change takes effect immediately (including handing sizing
+-- back to EllesmereUINameplates' own slot size when turned off) instead of
+-- waiting for the next natural RAID_TARGET_UPDATE.
+local function RefreshFriendlyRaidIconPlates()
+    local npNS = GetNameplatesNS()
+    local plates = npNS and npNS.friendlyPlates
+    if not plates then return end
+    for _, plate in pairs(plates) do
+        if plate.UpdateRaidIcon then plate:UpdateRaidIcon() end
+    end
+end
+
+-------------------------------------------------------------------------------
+--  Nameplates: Custom Friendly Raid Marker Size -- Name Only mode
+--  EllesmereUINameplates' friendly plates default to "Name Only" mode
+--  (friendlyNameOnly = true in its defaults) -- friendlyNameOnly must be
+--  explicitly turned OFF for the custom FriendlyFrame path above (with its
+--  own raidFrame) to ever run at all. In Name Only mode ns.friendlyPlates
+--  stays permanently empty and the marker seen on friendly plates is
+--  Blizzard's OWN default CompactUnitFrame element, nameplate.UnitFrame.
+--  RaidTargetFrame -- confirmed by EllesmereUINameplatesFriendly.lua's own
+--  comment on the event it re-registers for that path ("Blizzard's
+--  RaidTargetFrame is the marker display on this path"). EllesmereUI leaves
+--  that frame otherwise untouched (it only strips unrelated events off the
+--  surrounding UnitFrame), so this hooks it directly instead.
+--
+--  RaidTargetFrame is a plain (non-forbidden) Frame sized by Blizzard's
+--  template with a child Texture region (.Texture) that carries its OWN
+--  fixed size independent of the parent -- resizing the outer frame alone
+--  does nothing visible, so both get resized together. hooksecurefunc on
+--  its Show catches every native redraw regardless of whether Blizzard's
+--  update path is a bare function or a frame-mixin method internally.
+--  Nameplate UnitFrames are pooled/reused by Blizzard itself (a small fixed
+--  set of physical frames), so hooking is one-time-per-frame here too.
+--
+--  The frame's size at first-hook time is captured as its "native" size so
+--  turning the toggle off restores exactly what Blizzard shipped, rather
+--  than a guessed hardcoded 16x16 that could be wrong on some future client
+--  build. Filtered to friendly units only (UnitCanAttack check) so this
+--  never touches enemy plates, which don't use this Name-Only path anyway.
+-------------------------------------------------------------------------------
+local hookedBlizzRaidFrames = setmetatable({}, { __mode = "k" })
+
+-- Blizzard's parentKey for the icon texture region inside RaidTargetFrame
+-- isn't confirmed for this client build, so .Texture/.texture are tried
+-- first and a plain region scan is the fallback -- resizing only the outer
+-- frame wouldn't grow the icon, since the texture carries its own fixed
+-- size independent of its parent.
+local function GetRaidTargetFrameTexture(rtf)
+    local tex = rtf.Texture or rtf.texture
+    if tex then return tex end
+    for _, region in ipairs({ rtf:GetRegions() }) do
+        if region.GetObjectType and region:GetObjectType() == "Texture" then
+            return region
+        end
+    end
+end
+
+local function ApplyBlizzFriendlyRaidMarkerSize(rtf)
+    if not rtf:IsShown() then return end
+    local uf = rtf:GetParent()
+    local unit = uf and (uf.displayedUnit or uf.unit)
+    if not unit or UnitCanAttack("player", unit) then return end
+    local cfg = DB()
+    local tex = GetRaidTargetFrameTexture(rtf)
+    if cfg and cfg.friendlyRaidMarkerSizeEnabled then
+        local sz = cfg.friendlyRaidMarkerSize or 24
+        rtf:SetSize(sz, sz)
+        if tex then tex:SetSize(sz, sz) end
+    elseif rtf._evlNativeW then
+        rtf:SetSize(rtf._evlNativeW, rtf._evlNativeH)
+        if tex and rtf._evlNativeTexW then tex:SetSize(rtf._evlNativeTexW, rtf._evlNativeTexH) end
+    end
+end
+
+local function HookBlizzRaidTargetFrame(rtf)
+    if not rtf or hookedBlizzRaidFrames[rtf] then return end
+    hookedBlizzRaidFrames[rtf] = true
+    rtf._evlNativeW, rtf._evlNativeH = rtf:GetSize()
+    local tex = GetRaidTargetFrameTexture(rtf)
+    if tex then rtf._evlNativeTexW, rtf._evlNativeTexH = tex:GetSize() end
+    hooksecurefunc(rtf, "Show", ApplyBlizzFriendlyRaidMarkerSize)
+end
+
+-- One pass: hooks any newly-seen nameplate's Blizzard RaidTargetFrame AND
+-- (re)applies current sizing to every one already shown -- covers both the
+-- lifecycle watcher below and an immediate settings-change refresh.
+local function SweepBlizzRaidTargetFrames()
+    local plates = C_NamePlate.GetNamePlates and C_NamePlate.GetNamePlates()
+    if not plates then return end
+    for _, nameplate in ipairs(plates) do
+        local uf = nameplate.UnitFrame
+        local rtf = uf and not uf:IsForbidden() and uf.RaidTargetFrame
+        if rtf then
+            HookBlizzRaidTargetFrame(rtf)
+            ApplyBlizzFriendlyRaidMarkerSize(rtf)
+        end
+    end
+end
+
+local npWatcher
+local function EnsureFriendlyRaidIconWatcher()
+    if npWatcher then return end
+    npWatcher = CreateFrame("Frame")
+    npWatcher:RegisterEvent("NAME_PLATE_UNIT_ADDED")
+    npWatcher:RegisterEvent("PLAYER_ENTERING_WORLD")
+    npWatcher:SetScript("OnEvent", function()
+        C_Timer.After(0, function()
+            SweepFriendlyRaidIconPlates()
+            SweepBlizzRaidTargetFrames()
+        end)
+    end)
+end
+
+local function ApplyFriendlyRaidMarkerSizeToggle()
+    EnsureFriendlyRaidIconWatcher()
+    SweepFriendlyRaidIconPlates()
+    RefreshFriendlyRaidIconPlates()
+    SweepBlizzRaidTargetFrames()
+end
+
 function EVL.ApplyTweaks()
     ApplyRunesSpecColor()
     ApplyResourceBarBlockStyleToggle()
     ApplyBuffBorderColor()
     ApplyMirrorCdmVisibility()
+    ApplyFriendlyRaidMarkerSizeToggle()
 end

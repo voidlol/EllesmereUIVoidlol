@@ -960,6 +960,28 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
+        _, h = W:SectionHeader(parent, "NAMEPLATES", y); y = y - h
+
+        local function RaidMarkerSizeOff() local c = QoL(); return not (c and c.friendlyRaidMarkerSizeEnabled) end
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Custom Raid Marker Size",
+              tooltip="Friendly nameplates only. Neither EllesmereUINameplates nor Blizzard expose a dedicated size for the raid target marker on friendly plates -- it's tied to a shared icon-slot size (Health Bar mode) or fixed at Blizzard's own default (Name Only mode, the default). This overrides just the marker's size on friendly plates, independent of either.",
+              getValue=function() local c = QoL(); return c and c.friendlyRaidMarkerSizeEnabled or false end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.friendlyRaidMarkerSizeEnabled = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Marker Size",
+              min = 8, max = 72, step = 1,
+              disabled=RaidMarkerSizeOff,
+              getValue=function() local c = QoL(); return c and c.friendlyRaidMarkerSize or 24 end,
+              setValue=function(v)
+                  local c = QoL(); if c then c.friendlyRaidMarkerSize = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
         return math.abs(y)
     end
 

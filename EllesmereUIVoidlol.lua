@@ -25,6 +25,9 @@ local defaults = {
 
                 mirrorCdmCooldownsVisibilityToBars = false,
 
+                friendlyRaidMarkerSizeEnabled = false,
+                friendlyRaidMarkerSize = 24,
+
                 statusBar = {
                     enabled = false,
                     spacing = 12,
