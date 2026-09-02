@@ -110,6 +110,7 @@ end
 -------------------------------------------------------------------------------
 HookFrame = function(frame)
     if not frame or frame.evlQuickFocusHooked then return end
+    if frame.IsForbidden and frame:IsForbidden() then return end
     local cfg = DB()
     if not cfg then return end
     if not InCombatLockdown() then
@@ -121,21 +122,86 @@ HookFrame = function(frame)
     end
 end
 
+-- IsForbidden() doesn't reliably catch every forbidden descendant while
+-- walking CompactRaidFrameContainer/ERF trees (12.1 regression) -- pcall
+-- every call that can hard-error with "Attempt to access forbidden object"
+-- instead of trusting the pre-check alone.
 local function HookChildren(frame)
     if not frame then return end
-    if frame.GetAttribute and frame:GetAttribute("unit") then
-        HookFrame(frame)
-    end
-    if frame.GetNumChildren then
-        for i = 1, frame:GetNumChildren() do
-            HookChildren(select(i, frame:GetChildren()))
+    if frame.IsForbidden and frame:IsForbidden() then return end
+
+    if frame.GetAttribute then
+        local ok, hasUnit = pcall(frame.GetAttribute, frame, "unit")
+        if ok and hasUnit then
+            HookFrame(frame)
         end
+    end
+
+    if not frame.GetNumChildren then return end
+    local ok, numChildren = pcall(frame.GetNumChildren, frame)
+    if not ok or not numChildren or numChildren == 0 then return end
+
+    local ok2, children = pcall(function() return { frame:GetChildren() } end)
+    if not ok2 then return end
+    for i = 1, numChildren do
+        HookChildren(children[i])
     end
 end
 
 local function HookByName(name)
     local f = _G[name]
     if f then HookFrame(f) end
+end
+
+-- Bounded 2-level walk (container -> group -> member) for Blizzard's own
+-- CompactRaidFrameContainer, mirroring how ElvUI_WindTools's QuickFocus
+-- module walks group headers -- checking "unit" at each level instead of
+-- recursing arbitrarily deep into a tree we don't own. Unlike ERF headers
+-- (our own frames, never forbidden), Blizzard's compact-frame internals can
+-- contain forbidden descendants (auras, threat/role icons, etc.), so this
+-- avoids ever descending into them instead of just catching the error.
+local function TryHookIfUnit(frame)
+    if not frame or not frame.GetAttribute then return false end
+    local ok, hasUnit = pcall(frame.GetAttribute, frame, "unit")
+    if ok and hasUnit then
+        HookFrame(frame)
+        return true
+    end
+    return false
+end
+
+local function GetChildrenSafe(frame)
+    if not frame or not frame.GetNumChildren then return nil end
+    local ok, numChildren = pcall(frame.GetNumChildren, frame)
+    if not ok or not numChildren or numChildren == 0 then return nil end
+    local ok2, children = pcall(function() return { frame:GetChildren() } end)
+    if not ok2 then return nil end
+    return children, numChildren
+end
+
+local function HookCompactRaidFrameContainer(name)
+    local container = _G[name]
+    if not container then return end
+    if container.IsForbidden and container:IsForbidden() then return end
+
+    local groups, numGroups = GetChildrenSafe(container)
+    if not groups then return end
+    for i = 1, numGroups do
+        local group = groups[i]
+        if group and not (group.IsForbidden and group:IsForbidden()) then
+            if not TryHookIfUnit(group) then
+                local members, numMembers = GetChildrenSafe(group)
+                if members then
+                    for j = 1, numMembers do
+                        local member = members[j]
+                        if member and not (member.IsForbidden and member:IsForbidden()) then
+                            TryHookIfUnit(member)
+                        end
+                    end
+                end
+            end
+        end
+    end
 end
 
 local function HookChildrenByName(name)
@@ -192,7 +258,7 @@ HookAllFrames = function()
 
     for _, name in ipairs(BLIZZARD_SINGLE_FRAME_NAMES) do HookByName(name) end
     for i = 1, 5 do HookByName("PartyMemberFrame" .. i) end
-    HookChildrenByName("CompactRaidFrameContainer")
+    HookCompactRaidFrameContainer("CompactRaidFrameContainer")
 end
 
 -------------------------------------------------------------------------------
