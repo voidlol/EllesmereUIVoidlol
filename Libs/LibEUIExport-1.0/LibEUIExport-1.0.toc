@@ -1,0 +1,8 @@
+## Interface: 120000, 120001, 120005, 120007
+## Title: Lib: LibEUIExport-1.0
+## Notes: Turns (name, type, data) into one copy-paste-safe export string, and back. Requires LibStub and LibDeflate.
+## Author: Ellesmere
+## Version: 1
+## X-Category: Library
+
+LibEUIExport-1.0.lua
