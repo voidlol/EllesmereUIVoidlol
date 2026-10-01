@@ -22,6 +22,7 @@ local function GetAddonVersion()
 end
 
 local PAGE_QOL              = "QoL"
+local PAGE_TOOLTIP          = "Tooltip"
 local PAGE_TWEAKS           = "Tweaks"
 local PAGE_QUICK_FOCUS      = "Quick Focus"
 local PAGE_COMBAT_TEXT      = "Combat Text"
@@ -902,6 +903,165 @@ initFrame:SetScript("OnEvent", function(self)
               getValue=function() local c = SB(); return c and c.bgOpacity or 50 end,
               setValue=function(v)
                   local c = SB(); if c then c.bgOpacity = v end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        return math.abs(y)
+    end
+
+    ---------------------------------------------------------------------------
+    --  Tooltip page -- tooltip enhancements (health bar under unit tooltips)
+    ---------------------------------------------------------------------------
+    local function TT() local q = QoL(); return q and q.tooltip end
+
+    local function BuildTooltipPage(pageName, parent, yOffset)
+        local W = EllesmereUI.Widgets
+        local y = yOffset
+        local h
+
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        parent._showRowDivider = true
+
+        local function HBOff() local c = TT(); return not (c and c.healthBarEnabled) end
+        local function TextOff() local c = TT(); return HBOff() or not (c and c.showText) end
+        local function CustomColorOff() local c = TT(); return HBOff() or not (c and c.colorMode == "custom") end
+
+        _, h = W:SectionHeader(parent, "HEALTH BAR", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Health Bar",
+              tooltip="Adds a health bar under unit tooltips (players, NPCs, unit frames). Separate from Blizzard's own tooltip health strip, which EllesmereUI hides by default.",
+              getValue=function() local c = TT(); return c and c.healthBarEnabled or false end,
+              setValue=function(v)
+                  local c = TT(); if c then c.healthBarEnabled = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="slider", text="Height",
+              min = 2, max = 30, step = 1,
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.height or 8 end,
+              setValue=function(v)
+                  local c = TT(); if c then c.height = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        local texValues, texOrder = BuildBarTextureDropdownData()
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Texture",
+              values = texValues, order = texOrder,
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.texture or "Blizzard" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.texture = v end
+                  RefreshAll()
+              end },
+            { type="dropdown", text="Bar Color",
+              values = { class = "Class / Reaction", custom = "Custom" },
+              order  = { "class", "custom" },
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.colorMode or "class" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.colorMode = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Custom Color",
+              disabled=CustomColorOff,
+              getValue=function()
+                  local c = TT()
+                  return (c and c.colorR or 0.2), (c and c.colorG or 0.8), (c and c.colorB or 0.2)
+              end,
+              setValue=function(r, g, b)
+                  local c = TT()
+                  if c then c.colorR = r; c.colorG = g; c.colorB = b end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "HEALTH TEXT", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Text",
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.showText ~= false end,
+              setValue=function(v)
+                  local c = TT(); if c then c.showText = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="dropdown", text="Format",
+              values = {
+                  percent        = "Percent (85%)",
+                  current        = "Current (1.2M)",
+                  currentmax     = "Current / Max (1.2M / 1.4M)",
+                  currentpercent = "Current | Percent (1.2M | 85%)",
+              },
+              order  = { "percent", "current", "currentmax", "currentpercent" },
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.textFormat or "currentpercent" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.textFormat = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Font",
+              values = fontValues, order = fontOrder,
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.fontFace or "__global" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.fontFace = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Font Size",
+              min = 6, max = 24, step = 1,
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.fontSize or 11 end,
+              setValue=function(v)
+                  local c = TT(); if c then c.fontSize = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Alignment",
+              values = { LEFT = "Left", CENTER = "Center", RIGHT = "Right" },
+              order  = { "LEFT", "CENTER", "RIGHT" },
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.textAlign or "CENTER" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.textAlign = v end
+                  RefreshAll()
+              end },
+            { type="toggle", text="Outline",
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.outline ~= false end,
+              setValue=function(v)
+                  local c = TT(); if c then c.outline = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Text Color",
+              disabled=TextOff,
+              getValue=function()
+                  local c = TT()
+                  return (c and c.textColorR or 1), (c and c.textColorG or 1), (c and c.textColorB or 1)
+              end,
+              setValue=function(r, g, b)
+                  local c = TT()
+                  if c then c.textColorR = r; c.textColorG = g; c.textColorB = b end
                   RefreshAll()
               end },
             { type="label", text="" })
@@ -2554,9 +2714,10 @@ initFrame:SetScript("OnEvent", function(self)
             key         = QOL_MODULE_KEY,
             title       = "QoL",
             description = "Small quality-of-life tweaks.",
-            pages       = { PAGE_QOL },
+            pages       = { PAGE_QOL, PAGE_TOOLTIP },
             buildPage   = function(pageName, parent, yOffset)
-                if pageName == PAGE_QOL then return BuildQoLPage(pageName, parent, yOffset) end
+                if pageName == PAGE_QOL     then return BuildQoLPage(pageName, parent, yOffset) end
+                if pageName == PAGE_TOOLTIP then return BuildTooltipPage(pageName, parent, yOffset) end
             end,
             onPageCacheRestore = function(pageName)
                 activePreviewPage = pageName

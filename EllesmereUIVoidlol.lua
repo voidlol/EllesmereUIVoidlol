@@ -36,6 +36,26 @@ local defaults = {
                 friendlyRaidMarkerSizeEnabled = false,
                 friendlyRaidMarkerSize = 24,
 
+                tooltip = {
+                    healthBarEnabled = false,
+                    height     = 8,
+                    texture    = "Blizzard", -- "Blizzard" or "sm:<LibSharedMedia name>"
+                    colorMode  = "class",    -- "class" (class/reaction) | "custom"
+                    colorR     = 0.2,
+                    colorG     = 0.8,
+                    colorB     = 0.2,
+
+                    showText   = true,
+                    textFormat = "currentpercent", -- "percent" | "current" | "currentmax" | "currentpercent"
+                    textAlign  = "CENTER",         -- "LEFT" | "CENTER" | "RIGHT"
+                    fontFace   = "__global",
+                    fontSize   = 11,
+                    outline    = true,
+                    textColorR = 1,
+                    textColorG = 1,
+                    textColorB = 1,
+                },
+
                 statusBar = {
                     enabled = false,
                     spacing = 12,
@@ -272,6 +292,7 @@ local function ApplyAll()
     -- ApplyAll stands down on WoW Forever on its own if this is ever lifted.)
     if cfg.interruptTracker then cfg.interruptTracker.enabled = false end
     if EVL.ApplyQoL then EVL.ApplyQoL() end
+    if EVL.ApplyTooltip then EVL.ApplyTooltip() end
     if EVL.ApplyTweaks then EVL.ApplyTweaks() end
     if EVL.ApplyStatusBar then EVL.ApplyStatusBar() end
     if EVL.ApplyQuickFocus then EVL.ApplyQuickFocus() end

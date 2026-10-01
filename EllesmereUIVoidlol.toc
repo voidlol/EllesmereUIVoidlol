@@ -17,6 +17,7 @@ Libs\LibEUIExport-1.0\LibEUIExport-1.0.lua
 EUI_Voidlol_SharedMedia.lua
 EllesmereUIVoidlol.lua
 EllesmereUIVoidlol_QoL.lua
+EllesmereUIVoidlol_Tooltip.lua
 EllesmereUIVoidlol_Tweaks.lua
 EllesmereUIVoidlol_StatusBar.lua
 EllesmereUIVoidlol_QuickFocus.lua
