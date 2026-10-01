@@ -22,6 +22,7 @@ local function GetAddonVersion()
 end
 
 local PAGE_QOL              = "QoL"
+local PAGE_TOOLTIP          = "Tooltip"
 local PAGE_TWEAKS           = "Tweaks"
 local PAGE_QUICK_FOCUS      = "Quick Focus"
 local PAGE_COMBAT_TEXT      = "Combat Text"
@@ -37,11 +38,18 @@ initFrame:SetScript("OnEvent", function(self)
 
     -- EllesmereUIOptions (which defines EllesmereUI.Widgets) is LoadOnDemand --
     -- it isn't loaded yet at PLAYER_LOGIN, only once the options panel is
-    -- actually opened. Registration itself only needs RegisterModule, which
+    -- actually opened. Registration itself only needs RegisterPlugin, which
     -- lives in the always-loaded EllesmereUI.lua; buildPage (which does need
     -- Widgets) only runs once the panel is open, by which point EllesmereUIOptions
     -- has been pulled in on demand.
-    if not EllesmereUI or not EllesmereUI.RegisterModule then return end
+    if not EllesmereUI or not EllesmereUI.RegisterPlugin then return end
+
+    -- The global search pre-builds every page once with a stub widget factory
+    -- (see PLUGINS_API.md "Search"). Builders must skip anything that touches
+    -- the live panel then: the shared content header and preview click-nav.
+    local function IsPrebuild()
+        return EllesmereUI.IsSearchPrebuild and EllesmereUI.IsSearchPrebuild()
+    end
 
     ---------------------------------------------------------------------------
     --  DB helpers
@@ -670,7 +678,7 @@ initFrame:SetScript("OnEvent", function(self)
         local y = yOffset
         local h
 
-        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
         parent._showRowDivider = true
 
         -- WoW Forever has no skyriding: the section is not built there (the
@@ -904,6 +912,165 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
+    --  Tooltip page -- tooltip enhancements (health bar under unit tooltips)
+    ---------------------------------------------------------------------------
+    local function TT() local q = QoL(); return q and q.tooltip end
+
+    local function BuildTooltipPage(pageName, parent, yOffset)
+        local W = EllesmereUI.Widgets
+        local y = yOffset
+        local h
+
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        parent._showRowDivider = true
+
+        local function HBOff() local c = TT(); return not (c and c.healthBarEnabled) end
+        local function TextOff() local c = TT(); return HBOff() or not (c and c.showText) end
+        local function CustomColorOff() local c = TT(); return HBOff() or not (c and c.colorMode == "custom") end
+
+        _, h = W:SectionHeader(parent, "HEALTH BAR", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Health Bar",
+              tooltip="Adds a health bar under unit tooltips (players, NPCs, unit frames). Separate from Blizzard's own tooltip health strip, which EllesmereUI hides by default.",
+              getValue=function() local c = TT(); return c and c.healthBarEnabled or false end,
+              setValue=function(v)
+                  local c = TT(); if c then c.healthBarEnabled = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="slider", text="Height",
+              min = 2, max = 30, step = 1,
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.height or 8 end,
+              setValue=function(v)
+                  local c = TT(); if c then c.height = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        local texValues, texOrder = BuildBarTextureDropdownData()
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Texture",
+              values = texValues, order = texOrder,
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.texture or "Blizzard" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.texture = v end
+                  RefreshAll()
+              end },
+            { type="dropdown", text="Bar Color",
+              values = { class = "Class / Reaction", custom = "Custom" },
+              order  = { "class", "custom" },
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.colorMode or "class" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.colorMode = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Custom Color",
+              disabled=CustomColorOff,
+              getValue=function()
+                  local c = TT()
+                  return (c and c.colorR or 0.2), (c and c.colorG or 0.8), (c and c.colorB or 0.2)
+              end,
+              setValue=function(r, g, b)
+                  local c = TT()
+                  if c then c.colorR = r; c.colorG = g; c.colorB = b end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        _, h = W:SectionHeader(parent, "HEALTH TEXT", y); y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="toggle", text="Show Text",
+              disabled=HBOff,
+              getValue=function() local c = TT(); return c and c.showText ~= false end,
+              setValue=function(v)
+                  local c = TT(); if c then c.showText = v end
+                  RefreshAll()
+                  RefreshWidgets()
+              end },
+            { type="dropdown", text="Format",
+              values = {
+                  percent        = "Percent (85%)",
+                  current        = "Current (1.2M)",
+                  currentmax     = "Current / Max (1.2M / 1.4M)",
+                  currentpercent = "Current | Percent (1.2M | 85%)",
+              },
+              order  = { "percent", "current", "currentmax", "currentpercent" },
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.textFormat or "currentpercent" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.textFormat = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        local fontValues, fontOrder = EllesmereUI.BuildFontDropdownData()
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Font",
+              values = fontValues, order = fontOrder,
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.fontFace or "__global" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.fontFace = v end
+                  RefreshAll()
+              end },
+            { type="slider", text="Font Size",
+              min = 6, max = 24, step = 1,
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.fontSize or 11 end,
+              setValue=function(v)
+                  local c = TT(); if c then c.fontSize = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="dropdown", text="Alignment",
+              values = { LEFT = "Left", CENTER = "Center", RIGHT = "Right" },
+              order  = { "LEFT", "CENTER", "RIGHT" },
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.textAlign or "CENTER" end,
+              setValue=function(v)
+                  local c = TT(); if c then c.textAlign = v end
+                  RefreshAll()
+              end },
+            { type="toggle", text="Outline",
+              disabled=TextOff,
+              getValue=function() local c = TT(); return c and c.outline ~= false end,
+              setValue=function(v)
+                  local c = TT(); if c then c.outline = v end
+                  RefreshAll()
+              end })
+        y = y - h
+
+        _, h = W:DualRow(parent, y,
+            { type="colorpicker", text="Text Color",
+              disabled=TextOff,
+              getValue=function()
+                  local c = TT()
+                  return (c and c.textColorR or 1), (c and c.textColorG or 1), (c and c.textColorB or 1)
+              end,
+              setValue=function(r, g, b)
+                  local c = TT()
+                  if c then c.textColorR = r; c.textColorG = g; c.textColorB = b end
+                  RefreshAll()
+              end },
+            { type="label", text="" })
+        y = y - h
+
+        return math.abs(y)
+    end
+
+    ---------------------------------------------------------------------------
     --  Tweaks page -- small hooks into other EllesmereUI modules
     ---------------------------------------------------------------------------
     local function BuildTweaksPage(pageName, parent, yOffset)
@@ -911,7 +1078,7 @@ initFrame:SetScript("OnEvent", function(self)
         local y = yOffset
         local h
 
-        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
         parent._showRowDivider = true
 
         _, h = W:SectionHeader(parent, "CLASS RESOURCES", y); y = y - h
@@ -1000,7 +1167,7 @@ initFrame:SetScript("OnEvent", function(self)
         local y = yOffset
         local h
 
-        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
         parent._showRowDivider = true
 
         _, h = W:SectionHeader(parent, "SETTINGS", y); y = y - h
@@ -1023,7 +1190,7 @@ initFrame:SetScript("OnEvent", function(self)
         local y = yOffset
         local h
 
-        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
         parent._showRowDivider = true
 
         local function MarkOff() local c = QF(); return not (c and c.setMark) end
@@ -1277,7 +1444,7 @@ initFrame:SetScript("OnEvent", function(self)
         local y = yOffset
         local h
 
-        if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
+        if not IsPrebuild() and EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
         parent._showRowDivider = true
 
         _, h = W:SectionHeader(parent, "GENERAL", y); y = y - h
@@ -1623,7 +1790,9 @@ initFrame:SetScript("OnEvent", function(self)
         local h
 
         castbarHeaderBuilder = BuildCastbarHeaderPreview
-        if EllesmereUI.SetContentHeader then
+        if IsPrebuild() then
+            -- search pre-build: leave the live content header alone
+        elseif EllesmereUI.SetContentHeader then
             EllesmereUI:SetContentHeader(castbarHeaderBuilder)
         elseif EllesmereUI.ClearContentHeader then
             EllesmereUI:ClearContentHeader()
@@ -1795,6 +1964,7 @@ initFrame:SetScript("OnEvent", function(self)
             { type="label", text="" })
         y = y - h
 
+        if IsPrebuild() then return math.abs(y) end
         castbarClickTargets = {
             icon     = { section = iconSection, target = iconRow },
             iconText = { section = iconSection, target = iconTextRow },
@@ -1835,7 +2005,9 @@ initFrame:SetScript("OnEvent", function(self)
         local h
 
         healerManaHeaderBuilder = BuildHealerManaHeaderPreview
-        if EllesmereUI.SetContentHeader then
+        if IsPrebuild() then
+            -- search pre-build: leave the live content header alone
+        elseif EllesmereUI.SetContentHeader then
             EllesmereUI:SetContentHeader(healerManaHeaderBuilder)
         elseif EllesmereUI.ClearContentHeader then
             EllesmereUI:ClearContentHeader()
@@ -1978,6 +2150,7 @@ initFrame:SetScript("OnEvent", function(self)
         BuildHealerFrameSection("RAID", "raid")
 
         local partyRefs, raidRefs = sectionRefs.party, sectionRefs.raid
+        if IsPrebuild() then return math.abs(y) end
         healerManaClickTargets = {
             party_icon = { section = partyRefs.section, target = partyRefs.iconRow },
             party_name = { section = partyRefs.section, target = partyRefs.fontRow },
@@ -2006,7 +2179,9 @@ initFrame:SetScript("OnEvent", function(self)
         local h
 
         interruptTrackerHeaderBuilder = BuildInterruptTrackerHeaderPreview
-        if EllesmereUI.SetContentHeader then
+        if IsPrebuild() then
+            -- search pre-build: leave the live content header alone
+        elseif EllesmereUI.SetContentHeader then
             EllesmereUI:SetContentHeader(interruptTrackerHeaderBuilder)
         elseif EllesmereUI.ClearContentHeader then
             EllesmereUI:ClearContentHeader()
@@ -2431,6 +2606,7 @@ initFrame:SetScript("OnEvent", function(self)
         -- closure rather than on `parent`, since the overlays need to attach
         -- as soon as BOTH this mapping AND the preview bars exist, and which
         -- of the two is ready first isn't guaranteed.
+        if IsPrebuild() then return math.abs(y) end
         interruptTrackerClickTargets = {
             icon             = { section = barAppearanceSection, target = iconPosRow },
             timeText         = { section = barAppearanceSection, target = textColorRow },
@@ -2446,63 +2622,14 @@ initFrame:SetScript("OnEvent", function(self)
     end
 
     ---------------------------------------------------------------------------
-    --  Register with EllesmereUI sidebar
+    --  Register with EllesmereUI sidebar (Plugin API, see
+    --  EllesmereUI/PLUGINS_API.md). Gets its own "Voidlol" section above
+    --  EUI's own groups, with one row per module: the main Voidlol module
+    --  and QoL as its own sub-category.
     ---------------------------------------------------------------------------
-    -- RegisterModule whitelists callers by folder name (via debugstack), and
-    -- "EllesmereUIVoidlol" isn't on that list -- a direct call is silently
-    -- dropped, so modules[MODULE_KEY] never gets set and /evl + the sidebar
-    -- button both stay dead. Route through a loadstring chunk instead: its
-    -- chunkname isn't a file path, so the whitelist check (which only fires
-    -- once it resolves a caller folder) never triggers.
-    local MODULE_KEY = "EllesmereUIVoidlol"
-
-    local function RegisterModuleExternal(config)
-        local EUI = _G.EllesmereUI
-        if not (EUI and EUI.RegisterModule) then return end
-
-        _G.__EVL_pendingReg = { key = MODULE_KEY, config = config }
-        local trampoline = loadstring and loadstring([[
-            local r = _G.__EVL_pendingReg
-            if r and EllesmereUI and EllesmereUI.RegisterModule then
-                EllesmereUI:RegisterModule(r.key, r.config)
-            end
-        ]], "EVL-register")
-        local ok = trampoline and pcall(trampoline)
-        _G.__EVL_pendingReg = nil
-
-        if not ok then
-            pcall(function() EUI:RegisterModule(MODULE_KEY, config) end)
-        end
-    end
-
-    -- RegisterModule only wires up the pages; the sidebar row itself comes
-    -- from a separate roster (ADDON_GROUPS/_addonInfoByFolder) that this
-    -- addon was never added to. alwaysLoaded hides the per-addon power
-    -- toggle, since this is a hard TOC dependency, not an optional module.
-    local function InjectSidebar()
-        local EUI = _G.EllesmereUI
-        if not EUI then return end
-
-        EUI._addonInfoByFolder = EUI._addonInfoByFolder or {}
-        EUI._addonInfoByFolder[MODULE_KEY] = EUI._addonInfoByFolder[MODULE_KEY] or {
-            folder       = MODULE_KEY,
-            display      = "Voidlol",
-            search_name  = "Voidlol EllesmereUIVoidlol",
-            alwaysLoaded = true,
-        }
-
-        EUI.ADDON_GROUPS = EUI.ADDON_GROUPS or {}
-        for _, group in ipairs(EUI.ADDON_GROUPS) do
-            if group.key == "voidlol" then return end
-        end
-        table.insert(EUI.ADDON_GROUPS, 1, {
-            key     = "voidlol",
-            label   = "Voidlol",
-            members = { MODULE_KEY },
-        })
-    end
-
-    InjectSidebar()
+    local PLUGIN_ID      = "EllesmereUIVoidlol"
+    local MODULE_KEY     = "Voidlol"
+    local QOL_MODULE_KEY = "QoL"
 
     do
         local version = GetAddonVersion()
@@ -2511,16 +2638,16 @@ initFrame:SetScript("OnEvent", function(self)
             description = description .. "  |cff888888v" .. version .. "|r"
         end
 
-        RegisterModuleExternal({
+        local voidlolModule = {
+            key         = MODULE_KEY,
             title       = "Voidlol",
             description = description,
             -- PAGE_INTERRUPT_TRACKER deliberately excluded -- module force-
             -- disabled (see EllesmereUIVoidlol.lua ApplyAll/OnEnable), not
             -- reliable enough to expose right now. Left out of the nav list
             -- rather than deleted so it's a one-line revert to bring back.
-            pages       = { PAGE_QOL, PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA, PAGE_IMPORT_EXPORT },
+            pages       = { PAGE_TWEAKS, PAGE_QUICK_FOCUS, PAGE_COMBAT_TEXT, PAGE_CASTBAR, PAGE_HEALER_MANA, PAGE_IMPORT_EXPORT },
             buildPage   = function(pageName, parent, yOffset)
-                if pageName == PAGE_QOL          then return BuildQoLPage(pageName, parent, yOffset) end
                 if pageName == PAGE_TWEAKS       then return BuildTweaksPage(pageName, parent, yOffset) end
                 if pageName == PAGE_QUICK_FOCUS  then return BuildQuickFocusPage(pageName, parent, yOffset) end
                 if pageName == PAGE_COMBAT_TEXT  then return BuildCombatTextPage(pageName, parent, yOffset) end
@@ -2574,20 +2701,38 @@ initFrame:SetScript("OnEvent", function(self)
                 if _G._EVL_DB and _G._EVL_DB.ResetProfile then
                     _G._EVL_DB:ResetProfile()
                 end
-                EllesmereUI:InvalidatePageCache()
+                -- ResetProfile wipes the whole profile, QoL included.
+                EllesmereUI:InvalidateModulePageCache(EllesmereUI.GetPluginModuleKey(PLUGIN_ID, MODULE_KEY))
+                EllesmereUI:InvalidateModulePageCache(EllesmereUI.GetPluginModuleKey(PLUGIN_ID, QOL_MODULE_KEY))
                 RefreshAll()
             end,
+        }
+
+        -- No onReset here: the only reset available is the whole-profile one,
+        -- which lives on the main Voidlol module.
+        local qolModule = {
+            key         = QOL_MODULE_KEY,
+            title       = "QoL",
+            description = "Small quality-of-life tweaks.",
+            pages       = { PAGE_QOL, PAGE_TOOLTIP },
+            buildPage   = function(pageName, parent, yOffset)
+                if pageName == PAGE_QOL     then return BuildQoLPage(pageName, parent, yOffset) end
+                if pageName == PAGE_TOOLTIP then return BuildTooltipPage(pageName, parent, yOffset) end
+            end,
+            onPageCacheRestore = function(pageName)
+                activePreviewPage = pageName
+            end,
+        }
+
+        EllesmereUI.RegisterPlugin(PLUGIN_ID, {
+            label    = "Voidlol",
+            position = "top",
+            modules  = { voidlolModule, qolModule },
         })
     end
 
     SLASH_EVL1 = "/evl"
     SlashCmdList.EVL = function()
-        if InCombatLockdown and InCombatLockdown() then return end
-        if EllesmereUI.Show then
-            EllesmereUI:Show()
-            C_Timer.After(0.1, function()
-                EllesmereUI:SelectModule("EllesmereUIVoidlol")
-            end)
-        end
+        EllesmereUI.OpenPlugin(PLUGIN_ID)
     end
 end)
