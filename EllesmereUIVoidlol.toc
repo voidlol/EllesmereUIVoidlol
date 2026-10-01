@@ -1,14 +1,11 @@
 ## Interface: 120000, 120001, 120005, 120007, 120100, 16001
-## Title: |cff0cd29fEllesmereUI|r Voidlol
-## Category: |cff0cd29fEllesmere|rUI
-## Group: EllesmereUI
+## Title: Voidlol Plugin for |cff0cd29fEllesmereUI|r
 ## Notes: Custom module for personal features and settings.
 ## Author: voidlol
 ## Version: 2.2.1
 ## Dependencies: EllesmereUI, EllesmereUIUnitFrames
 ## OptionalDeps: EllesmereUICooldownManager
 ## SavedVariables: EllesmereUIVoidlolDB
-## IconTexture: Interface\AddOns\EllesmereUI\media\eg-logo.tga
 
 # Libraries
 Libs\LibEUIExport-1.0\LibEUIExport-1.0.lua
