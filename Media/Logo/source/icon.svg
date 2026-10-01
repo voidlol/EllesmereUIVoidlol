@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="45%" r="70%">
+      <stop offset="0" stop-color="#24133f"/>
+      <stop offset="1" stop-color="#07040d"/>
+    </radialGradient>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b46bff"/>
+      <stop offset="0.55" stop-color="#6d4dff"/>
+      <stop offset="1" stop-color="#0cd29f"/>
+    </linearGradient>
+    <radialGradient id="core" cx="50%" cy="50%" r="50%">
+      <stop offset="0.7" stop-color="#000"/>
+      <stop offset="1" stop-color="#1b0b33"/>
+    </radialGradient>
+    <linearGradient id="v" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#cdb8ff"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="7"/>
+    </filter>
+  </defs>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="url(#bg)"/>
+  <rect x="4" y="4" width="248" height="248" rx="52" fill="none" stroke="#3a2466" stroke-width="4"/>
+  <!-- accretion ring: blurred halo + crisp ring -->
+  <circle cx="128" cy="128" r="84" fill="none" stroke="url(#ring)" stroke-width="22" opacity="0.75" filter="url(#glow)"/>
+  <circle cx="128" cy="128" r="84" fill="none" stroke="url(#ring)" stroke-width="14"/>
+  <!-- event horizon -->
+  <circle cx="128" cy="128" r="70" fill="url(#core)"/>
+  <!-- V mark -->
+  <path d="M84 86 H112 L128 140 L144 86 H172 L140 176 H116 Z" fill="url(#v)"/>
+</svg>

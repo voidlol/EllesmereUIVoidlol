@@ -6,6 +6,7 @@
 ## Dependencies: EllesmereUI, EllesmereUIUnitFrames
 ## OptionalDeps: EllesmereUICooldownManager
 ## SavedVariables: EllesmereUIVoidlolDB
+## IconTexture: Interface\AddOns\EllesmereUIVoidlol\Media\Logo\icon.tga
 
 # Libraries
 Libs\LibEUIExport-1.0\LibEUIExport-1.0.lua
