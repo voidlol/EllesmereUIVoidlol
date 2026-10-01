@@ -673,6 +673,9 @@ initFrame:SetScript("OnEvent", function(self)
         if EllesmereUI.ClearContentHeader then EllesmereUI:ClearContentHeader() end
         parent._showRowDivider = true
 
+        -- WoW Forever has no skyriding: the section is not built there (the
+        -- runtime override stands down too, EllesmereUIVoidlol_QoL.lua).
+        if not EVL.IS_FOREVER then
         _, h = W:SectionHeader(parent, "VISIBILITY", y); y = y - h
 
         _, h = W:DualRow(parent, y,
@@ -685,6 +688,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="label", text="" })
         y = y - h
+        end
 
         _, h = W:SectionHeader(parent, "CHAT", y); y = y - h
 
@@ -912,6 +916,8 @@ initFrame:SetScript("OnEvent", function(self)
 
         _, h = W:SectionHeader(parent, "CLASS RESOURCES", y); y = y - h
 
+        -- WoW Forever: no Death Knights, no specs -- row not built there.
+        if not EVL.IS_FOREVER then
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Spec-Based Rune Color",
               tooltip="Death Knight only. Colors runes by your current spec (Blood/Frost/Unholy) instead of the single Runes color from EllesmereUI's Class Resource Colors. Only takes effect while EllesmereUIResourceBars' Class Resource is set to the \"Class Resource Color\" fill mode.",
@@ -922,6 +928,7 @@ initFrame:SetScript("OnEvent", function(self)
               end },
             { type="label", text="" })
         y = y - h
+        end
 
         _, h = W:DualRow(parent, y,
             { type="toggle", text="Segmented Blocks",
@@ -2454,7 +2461,7 @@ initFrame:SetScript("OnEvent", function(self)
         if not (EUI and EUI.RegisterModule) then return end
 
         _G.__EVL_pendingReg = { key = MODULE_KEY, config = config }
-        local trampoline = loadstring([[
+        local trampoline = loadstring and loadstring([[
             local r = _G.__EVL_pendingReg
             if r and EllesmereUI and EllesmereUI.RegisterModule then
                 EllesmereUI:RegisterModule(r.key, r.config)

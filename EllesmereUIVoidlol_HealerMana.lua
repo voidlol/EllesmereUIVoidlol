@@ -79,9 +79,35 @@ local currentInspect
 local specCache = {}
 
 local FALLBACK_ICON = 135915
+
+-- WoW Forever has no specializations (every character reports its class's
+-- starter spec), so a spec icon says nothing and inspecting healers for one is
+-- wasted traffic. There the row shows the class icon from the stock class
+-- sprite instead, and the inspect queue never runs. Retail never reaches the
+-- Forever branch, so its texcoords stay the row's default crop.
+local CLASS_ICON_SPRITE = "Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES"
+local ICON_CROP = 0.08
+
+local function PaintHealerIcon(tex, specID, classToken)
+    if EVL.IS_FOREVER then
+        local tc = classToken and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[classToken]
+        if tc then
+            tex:SetTexture(CLASS_ICON_SPRITE)
+            tex:SetTexCoord(tc[1] + 0.02, tc[2] - 0.02, tc[3] + 0.02, tc[4] - 0.02)
+        else
+            tex:SetTexture(FALLBACK_ICON)
+            tex:SetTexCoord(ICON_CROP, 1 - ICON_CROP, ICON_CROP, 1 - ICON_CROP)
+        end
+        return
+    end
+    local icon = specID and select(4, GetSpecializationInfoByID(specID))
+    tex:SetTexture(icon or FALLBACK_ICON)
+end
 -- Used only by the options-page standalone preview groups -- Unlock Mode
 -- itself shows an empty stub, no sample spec/name/mana content.
 local PREVIEW_SPECS = { 105, 270, 65, 256, 257, 264, 1468 } -- Resto Druid, Mistweaver, Holy Pala, Disc, Holy Priest, Resto Sham, Preservation
+-- WoW Forever preview: the vanilla healing classes (no specs to pick from there).
+local PREVIEW_CLASSES_FOREVER = { "DRUID", "PALADIN", "PRIEST", "SHAMAN" }
 -- Mix of short and long fake names -- the long ones visibly demonstrate the
 -- name-length-limit setting in the preview, not just theoretically; the
 -- short ones show what a healer with an ordinary name actually looks like.
@@ -583,6 +609,7 @@ end
 --  queue just avoids spamming NotifyInspect for several healers at once).
 -------------------------------------------------------------------------------
 QueueInspect = function(healer)
+    if EVL.IS_FOREVER then return end -- no specs to learn (see PaintHealerIcon)
     if not healer or not healer.unit or not healer.guid then return end
     for _, queued in ipairs(inspectQueue) do
         if queued.guid == healer.guid then return end
@@ -651,8 +678,7 @@ end
 RefreshHealerIcon = function(key, healer)
     local row = activeRows[key] and activeRows[key][healer.frameIndex]
     if not row then return end
-    local icon = healer.specID and select(4, GetSpecializationInfoByID(healer.specID))
-    row.icon:SetTexture(icon or FALLBACK_ICON)
+    PaintHealerIcon(row.icon, healer.specID, healer.class)
 end
 
 RefreshHealerRow = function(unit)
@@ -691,13 +717,8 @@ RefreshContainer = function(key)
         local row = AcquireRow(key)
         ApplyRowStyle(key, row, textW)
 
-        local icon
-        if healer.specID then
-            icon = select(4, GetSpecializationInfoByID(healer.specID))
-        else
-            QueueInspect(healer)
-        end
-        row.icon:SetTexture(icon or FALLBACK_ICON)
+        if not healer.specID then QueueInspect(healer) end
+        PaintHealerIcon(row.icon, healer.specID, healer.class)
         row.icon:SetVertexColor(1, 1, 1)
 
         row.nameFS:SetText(TruncateHealerName(key, healer.name))
@@ -1009,10 +1030,15 @@ function EVL.HealerMana_RefreshPreviewGroup(key, count)
 
     local samples, names = {}, {}
     for i = 1, count do
-        local specID = PREVIEW_SPECS[math.random(1, #PREVIEW_SPECS)]
+        local specID, class
+        if EVL.IS_FOREVER then
+            class = PREVIEW_CLASSES_FOREVER[math.random(1, #PREVIEW_CLASSES_FOREVER)]
+        else
+            specID = PREVIEW_SPECS[math.random(1, #PREVIEW_SPECS)]
+        end
         local name = PREVIEW_NAMES[math.random(1, #PREVIEW_NAMES)]
         local displayName = TruncateHealerName(key, name)
-        samples[i] = { specID = specID, pct = math.random(1, 100), displayName = displayName }
+        samples[i] = { specID = specID, class = class, pct = math.random(1, 100), displayName = displayName }
         names[i] = displayName
     end
     local textW = ComputeTextColumnWidth(key, names)
@@ -1022,9 +1048,9 @@ function EVL.HealerMana_RefreshPreviewGroup(key, count)
         ApplyRowStyle(key, row, textW)
 
         local s = samples[i]
-        local _, _, _, icon, _, class = GetSpecializationInfoByID(s.specID)
+        local class = s.class or select(6, GetSpecializationInfoByID(s.specID))
         local r, gc, b = GetClassColor(class)
-        row.icon:SetTexture(icon or FALLBACK_ICON)
+        PaintHealerIcon(row.icon, s.specID, class)
         row.icon:SetVertexColor(1, 1, 1)
 
         row.nameFS:SetText(s.displayName)

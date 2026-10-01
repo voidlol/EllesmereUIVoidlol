@@ -47,8 +47,11 @@ local function ApplyDragonridingOverride()
         originalIsAirborneSkyriding = EUI.IsAirborneSkyriding
     end
 
+    -- WoW Forever has no skyriding. The override must never install there:
+    -- without a glide capability to consult it answers "true" for any mount,
+    -- so "Hide when Dragonriding" would hide bars on every ground mount.
     local cfg = DB()
-    if cfg and cfg.actualDragonridingVisibility then
+    if cfg and cfg.actualDragonridingVisibility and not EVL.IS_FOREVER then
         EUI.IsAirborneSkyriding = OverriddenIsAirborneSkyriding
     else
         EUI.IsAirborneSkyriding = originalIsAirborneSkyriding

@@ -7,6 +7,14 @@ local ADDON_NAME, ns = ...
 ns.EVL = ns.EVL or {}
 local EVL = ns.EVL
 
+-- WoW Forever (12.1 engine, vanilla content, toc 16001). Stamped by the
+-- parent (EllesmereUI_ClientGate.lua -> EllesmereUI_Lite.lua) before any
+-- child addon loads. Features built on retail-only mechanics (skyriding,
+-- specializations, Death Knights, retail interrupt data) gate on this and
+-- stand down at runtime; their saved values are left untouched so the same
+-- profile still round-trips to retail through Import/Export.
+EVL.IS_FOREVER = (EllesmereUI and EllesmereUI.IS_FOREVER) == true
+
 local EBS = EllesmereUI.Lite.NewAddon("EllesmereUIVoidlol")
 EVL.EBS = EBS
 
@@ -259,6 +267,9 @@ local function ApplyAll()
     -- saved flag here means it stays off even for a profile that had it
     -- enabled before this was pulled, and EVL.ApplyInterruptTracker/
     -- InitInterruptTracker are deliberately never called below.
+    -- (Also retail-only by design: its kick table, spec overrides and inspect
+    -- flow are retail data -- EllesmereUIVoidlol_InterruptTracker.lua's
+    -- ApplyAll stands down on WoW Forever on its own if this is ever lifted.)
     if cfg.interruptTracker then cfg.interruptTracker.enabled = false end
     if EVL.ApplyQoL then EVL.ApplyQoL() end
     if EVL.ApplyTweaks then EVL.ApplyTweaks() end

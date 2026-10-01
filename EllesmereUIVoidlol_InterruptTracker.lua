@@ -1472,7 +1472,10 @@ end
 -------------------------------------------------------------------------------
 local function ApplyAll()
     local cfg = DB()
-    if not cfg or not cfg.enabled then
+    -- WoW Forever: the kick table, spec overrides and spec learning above are
+    -- retail data (Mind Freeze, Evoker, spec IDs...), so the tracker stays off
+    -- there whatever the saved flag says.
+    if not cfg or not cfg.enabled or EVL.IS_FOREVER then
         DisableRuntime()
         if anchor then anchor:Hide() end
         unlockStubActive = false
