@@ -98,7 +98,19 @@ local function IsModuleEnabled()
     return ct and ct.enabled ~= false
 end
 
+-- Combat values (COMBAT_TEXT_UPDATE amounts, possibly UNIT_COMBAT fields) can
+-- arrive as "secret" values: type() still says "number"/"string", but tainted
+-- addon code may not compare them or do arithmetic on them. They may only be
+-- handed to engine APIs that accept secrets -- AbbreviateNumbers and
+-- FontString:SetText both do, and concatenating one yields a secret string.
+local function IsSecret(v)
+    return issecretvalue ~= nil and issecretvalue(v) == true
+end
+
 local function AbbreviateNumber(amount)
+    if IsSecret(amount) then
+        return AbbreviateNumbers and AbbreviateNumbers(amount) or amount
+    end
     if type(amount) ~= "number" then return amount end
     if amount >= 1000000 then
         return string.format("%.1fM", amount / 1000000)
@@ -232,6 +244,9 @@ local function ApplyRowStyle(row, key, amount, isCrit, schoolMask, specialText)
     local displayAmount
     if specialText then
         displayAmount = specialText
+    elseif IsSecret(amount) then
+        -- Unreadable: no ABSORB (0) check possible, just show the number.
+        displayAmount = (cfg.prefix or "") .. AbbreviateNumber(amount)
     elseif amount == 0 and key == "incomingDamage" then
         displayAmount = "ABSORB"
     elseif type(amount) ~= "number" then
@@ -242,7 +257,7 @@ local function ApplyRowStyle(row, key, amount, isCrit, schoolMask, specialText)
     row.text:SetText(displayAmount)
 
     if key == "incomingDamage" then
-        if cfg.colorByType and schoolMask and schoolMask ~= 1 then
+        if cfg.colorByType and schoolMask and not IsSecret(schoolMask) and schoolMask ~= 1 then
             row.text:SetTextColor(0.79, 0.3, 0.85, 1)
         else
             row.text:SetTextColor(def.previewR, def.previewG, def.previewB, 1)
@@ -446,6 +461,9 @@ EVL.ApplyCombatText = ApplyAll
 local function OnUnitCombat(unit, action, flagText, amount, schoolMask)
     if unit ~= "player" then return end
     hasUnitCombat = true
+    -- Without a readable action there is no telling damage from heal.
+    if IsSecret(action) then return end
+    if IsSecret(flagText) then flagText = nil end
 
     if action == "WOUND" and type(amount) == "number" then
         DisplayIncomingText("incomingDamage", amount, flagText == "CRITICAL", schoolMask)

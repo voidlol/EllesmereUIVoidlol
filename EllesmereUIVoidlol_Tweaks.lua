@@ -63,9 +63,10 @@ local function ApplyRunesSpecColor()
         originalGetClassResourceColor = EUI.GetClassResourceColor
     end
 
+    -- WoW Forever: no Death Knights and no specs, so the hook never installs.
     local _, class = UnitClass("player")
     local cfg = DB()
-    if class == "DEATHKNIGHT" and cfg and cfg.runesSpecColored then
+    if not EVL.IS_FOREVER and class == "DEATHKNIGHT" and cfg and cfg.runesSpecColored then
         EnsureSpecWatcher()
         EUI.GetClassResourceColor = HookedGetClassResourceColor
     else
